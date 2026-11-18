@@ -5,7 +5,9 @@ import { createCloudStage } from './clouds.js';
 const C = window.Cesium;
 const $ = id => document.getElementById(id);
 const native = window.webkit?.messageHandlers?.scene;
-let viewer, buildings, terrain, state, astronomy, snowShader, cloudStage;
+let viewer, buildings, terrain, state, astronomy, snowShader, tintShader, cloudStage;
+// True while `buildings` is the photorealistic mesh, which includes its own ground.
+let photoreal = false;
 let heading = 0, pitch = 0.025, eyeHeight = 1.7;
 let geometryGeneration = 0, positionGeneration = 0, weatherGeneration = 0;
 let activeToken, terrainAvailable = false, geometryMessage = 'Geographic data unavailable';
@@ -183,6 +185,23 @@ async function placeObserver() {
   const { latitude, longitude } = state;
   eyeHeight = 1.7;
   setCamera();
+  if (photoreal) {
+    try {
+      // The mesh is the ground here, so sample it instead of a terrain provider.
+      const [position] = await viewer.scene.sampleHeightMostDetailed([C.Cartographic.fromDegrees(longitude, latitude)]);
+      if (generation !== positionGeneration) return;
+      if (!Number.isFinite(position?.height)) throw new Error('No mesh height');
+      eyeHeight = position.height + 1.7;
+      setCamera();
+    } catch {
+      if (generation !== positionGeneration) return;
+      showNotice('Ground elevation unavailable', 'The 3D mesh height could not be resolved at this pin. Choose a nearby outdoor point on the map or try again when the data connection is available.');
+      geometryMessage = 'Ground elevation unresolved · viewpoint approximate';
+      $('geometry-status').textContent = geometryMessage;
+      postStatus(true);
+    }
+    return;
+  }
   if (!terrain || !terrainAvailable) return;
   try {
     const [position] = await C.sampleTerrainMostDetailed(terrain, [C.Cartographic.fromDegrees(longitude, latitude)]);
@@ -207,6 +226,9 @@ async function loadGeography(token) {
   terrain = undefined;
   if (buildings) { viewer.scene.primitives.remove(buildings); buildings = undefined; }
   if (snowShader) { snowShader.destroy(); snowShader = undefined; }
+  if (tintShader) { tintShader.destroy(); tintShader = undefined; }
+  photoreal = false;
+  viewer.scene.globe.show = true;
   viewer.terrainProvider = new C.EllipsoidTerrainProvider();
   if (!token) {
     geometryMessage = 'Sky preview · terrain and buildings not loaded';
@@ -219,7 +241,42 @@ async function loadGeography(token) {
   C.Ion.defaultAccessToken = token;
   geometryMessage = 'Loading terrain and buildings…';
   $('geometry-status').textContent = geometryMessage;
-  showNotice('Loading this place', 'Preparing terrain and simplified real building geometry. Heights and small features may be approximate.');
+  showNotice('Loading this place', 'Preparing the 3D model of this place. Heights and small features may be approximate.');
+  // First choice: Google Photorealistic 3D Tiles through Cesium ion (asset
+  // 2275207), a textured mesh of real buildings, trees and ground. The ion
+  // account must have that asset added; otherwise fall back to World Terrain
+  // with OSM building boxes below.
+  let mesh;
+  try {
+    // Requested directly rather than through Cesium's helper, which remembers a
+    // failed request and would keep failing after the token is corrected.
+    mesh = await C.Cesium3DTileset.fromUrl(await C.IonResource.fromAssetId(2275207), {
+      maximumScreenSpaceError: detailError(), showCreditsOnScreen: true, enableCollision: true,
+      // Capture-time shadows are baked into the textures; casting more would double them.
+      shadows: C.ShadowMode.DISABLED });
+  } catch {
+    mesh = undefined;
+  }
+  if (generation !== geometryGeneration) { mesh?.destroy(); return; }
+  if (mesh) {
+    photoreal = true;
+    // The mesh replaces the globe surface; drawing both makes them fight.
+    viewer.scene.globe.show = false;
+    buildings = viewer.scene.primitives.add(mesh);
+    buildings.tileFailed.addEventListener(() => {
+      geometryMessage = 'Some 3D tiles unavailable · coverage incomplete';
+      $('geometry-status').textContent = geometryMessage;
+      postStatus(true);
+    });
+    updateBuildingStyle();
+    geometryMessage = 'Photorealistic 3D mesh · captured in daylight, relit approximately';
+    $('geometry-status').textContent = geometryMessage;
+    $('setup-message').hidden = true;
+    await placeObserver();
+    viewer.scene.requestRender();
+    postStatus(true);
+    return;
+  }
   const results = await Promise.allSettled([
     C.createWorldTerrainAsync({ requestVertexNormals: true, requestWaterMask: false }),
     C.createOsmBuildingsAsync({ defaultColor: C.Color.fromCssColorString('#dbd5c8'),
@@ -272,6 +329,20 @@ function detailError() { return state?.detail === 'high' ? 8 : state?.detail ===
 
 function updateBuildingStyle() {
   if (!buildings) return;
+  if (photoreal) {
+    // The mesh carries photographs taken in daylight and has no usable
+    // normals, so it cannot be lit. Multiply it by the current light instead.
+    if (!tintShader) tintShader = new C.CustomShader({
+      lightingModel: C.LightingModel.UNLIT,
+      uniforms: { u_light: { type: C.UniformType.VEC3, value: new C.Cartesian3(1, 1, 1) } },
+      fragmentShaderText: `void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material) {
+        material.diffuse *= u_light;
+      }`,
+    });
+    tintShader.setUniform('u_light', meshLight());
+    buildings.customShader = tintShader;
+    return;
+  }
   // A uniform matte style deliberately avoids photographic lighting baked into textures.
   if (!buildings.style) buildings.style = new C.Cesium3DTileStyle({ color: "color('#dbd5c8')" });
   const white = state.snowCover || (state.weatherEnabled && (weather.snowDepth ?? 0) > 0);
@@ -290,6 +361,21 @@ function updateBuildingStyle() {
   } else { buildings.customShader = undefined; }
 }
 
+// Approximate colour of the light falling on the scene: dark blue at night,
+// warm near sunrise and sunset, dimmer and greyer under cloud.
+function meshLight() {
+  const altitude = astronomy?.sun.altitude ?? 45;
+  const enabled = state?.weatherEnabled && weather.kind !== 'missing';
+  const clouds = enabled ? clamp((weather.cloudCover ?? 0) / 100, 0, 1) : 0;
+  const daylight = clamp((altitude + 8) / 20, 0, 1);
+  const warmth = clamp(1 - Math.abs(altitude - 2) / 12, 0, 1) * (1 - clouds * 0.8);
+  const mix = (night, day, warm) => {
+    const base = night + (day - night) * daylight;
+    return (base + (warm - base) * warmth * 0.6) * (1 - clouds * 0.3 * daylight);
+  };
+  return new C.Cartesian3(mix(0.03, 1, 1.0), mix(0.04, 1, 0.76), mix(0.075, 1, 0.56));
+}
+
 function updateLightAndWeather() {
   if (!viewer || !astronomy) return;
   const enabled = state.weatherEnabled && weather.kind !== 'missing';
@@ -304,7 +390,8 @@ function updateLightAndWeather() {
   viewer.scene.skyAtmosphere.brightnessShift = -clouds * 0.22;
   const visibility = enabled ? weather.visibility : null;
   viewer.scene.fog.density = visibility > 0 ? clamp(1 / visibility, 0.00005, 0.004) : 0.00008;
-  const white = state.snowCover || (enabled && (weather.snowDepth ?? 0) > 0);
+  // The photographic mesh cannot be whitened by surface direction.
+  const white = !photoreal && (state.snowCover || (enabled && (weather.snowDepth ?? 0) > 0));
   viewer.scene.globe.baseColor = C.Color.fromCssColorString(white ? '#cdd4d4' : '#65735d');
   $('snow-label').hidden = !white;
   $('snow-label').textContent = state.snowCover ? 'Illustrative white surfaces · no depth simulation'
