@@ -4,8 +4,8 @@ jobs:
   mac-app:
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -15,14 +15,14 @@ jobs:
         run: |
           app_path="$(cd build/WhenScape.app && pwd -P)"
           ditto -c -k --sequesterRsrc --keepParent "$app_path" build/WhenScape-macOS.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: WhenScape-macOS
           path: build/WhenScape-macOS.zip
   mac-saver:
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Test the sundial and weather
         run: scripts/test-saver.sh
       - name: Build the screensaver bundle
@@ -31,7 +31,7 @@ jobs:
         run: build/WhenScapePreview --smoke --system-size
       - name: Package the screensaver
         run: ditto -c -k --sequesterRsrc --keepParent build/WhenScape.saver build/WhenScape-saver-macOS.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: WhenScape-saver-macOS
           path: build/WhenScape-saver-macOS.zip
@@ -43,7 +43,7 @@ jobs:
           for fixture in clear morning afternoon summer overcast fog rain snow snow-cover twilight moon cloudy-night; do
             build/WhenScapePreview --fixture "$fixture" --capture "build/saver-previews/$fixture.png"
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: WhenScape-saver-previews
           path: build/saver-previews/*.png
