@@ -1,0 +1,52 @@
+:root { font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #f2f4f6; color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body, #scene { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+body { background: #172332; }
+#scene { outline: none; cursor: grab; }
+#scene:active { cursor: grabbing; }
+#scene:focus-visible { outline: 2px solid #ecb37b; outline-offset: -3px; }
+canvas { display: block; }
+#weather-effects { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#weather-effects { z-index: 2; }
+.top-hud { position: absolute; z-index: 3; top: 27px; left: 27px; right: 27px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; pointer-events: none; }
+.scene-caption { text-shadow: 0 2px 12px #0d1528a8; }
+.eyebrow { font-size: 10px; font-weight: 650; letter-spacing: 1.9px; color: #d0d7df; }
+.live-dot { display: inline-block; width: 5px; height: 5px; background: #e8bb83; border-radius: 50%; margin: 0 5px 2px 0; }
+h1 { font-size: clamp(20px, 2.8vw, 29px); font-weight: 500; letter-spacing: -0.8px; margin: 7px 0 5px; }
+.secondary { font-size: 11px; color: #c5ced8; line-height: 1.5; }
+.glass { border: 1px solid #ffffff24; background: #18232cba; box-shadow: 0 6px 30px #08101a18; border-radius: 12px; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
+.compass { pointer-events: auto; color: inherit; display: flex; width: 76px; flex-shrink: 0; padding: 5px 8px 9px; flex-direction: column; align-items: center; cursor: pointer; font: inherit; }
+.compass:hover { background: #263746e6; }
+.compass svg { width: 38px; height: 38px; }
+.compass span { font-size: 10px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+#compass-needle { transform-origin: 20px 20px; }
+.notice { z-index: 4; position: absolute; left: 50%; top: 43%; transform: translate(-50%, -50%); width: min(400px, calc(100% - 64px)); padding: 21px; display: flex; gap: 16px; }
+[hidden] { display: none !important; }
+.notice-icon { color: #e8bb83; font-size: 30px; line-height: 30px; }
+.notice strong { font-size: 14px; font-weight: 600; }
+.notice p { font-size: 12px; color: #c6d0da; margin: 8px 0 0; line-height: 1.6; }
+/* The geometry footer stays visible while expanded provenance takes priority. */
+body:has(#weather-provenance[open]) #setup-message { visibility: hidden; }
+.bottom-hud { z-index: 3; position: absolute; bottom: 66px; left: 27px; right: 27px; display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; pointer-events: none; }
+.conditions { padding: 15px 17px; max-width: 380px; max-height: calc(100vh - 170px); overflow: auto; pointer-events: auto; }
+.conditions .eyebrow { color: #b8c8d5; font-size: 9px; margin-bottom: 7px; }
+#weather-summary { font-size: 15px; font-weight: 500; margin-bottom: 5px; }
+#weather-detail { max-width: 310px; }
+#weather-attribution { display: block; margin-top: 6px; font-size: 9px; color: #c3d4e0; pointer-events: auto; text-underline-offset: 2px; }
+.weather-actions { margin-top: 8px; display: flex; align-items: flex-start; gap: 18px; pointer-events: auto; }
+#weather-provenance { flex: 1; font-size: 10px; color: #c3d4e0; }
+#weather-provenance summary { cursor: pointer; }
+#weather-source-detail { white-space: pre-line; line-height: 1.6; margin-top: 7px; max-height: 180px; overflow: auto; }
+#refresh-weather { color: #d6e1e9; background: none; padding: 0; border: 0; cursor: pointer; font: inherit; font-size: 10px; }
+#refresh-weather:hover { color: #fff; text-decoration: underline; }
+.wind { display: flex; align-items: center; padding: 8px 13px 8px 5px; gap: 3px; flex-shrink: 0; }
+.wind span { font-size: 12px; white-space: nowrap; }
+.wind small { display: block; color: #bdcbd6; font-size: 10px; margin-top: 4px; }
+.footnote { position: absolute; bottom: 34px; left: 28px; right: 28px; display: flex; justify-content: space-between; gap: 15px; color: #d1dae3; font-size: 10px; z-index: 3; text-shadow: 0 1px 5px #000a; pointer-events: none; }
+.cesium-viewer-bottom { left: 14px !important; right: 14px !important; bottom: 5px !important; }
+.cesium-credit-textContainer, .cesium-credit-logoContainer { font-size: 9px !important; }
+.cesium-widget-credits { text-shadow: 0 1px 4px #000; }
+.cesium-viewer-toolbar, .cesium-viewer-animationContainer, .cesium-viewer-timelineContainer, .cesium-viewer-fullscreenContainer { display: none !important; }
+@media (max-width: 600px) { .top-hud { top: 18px; left: 18px; right: 18px; } .bottom-hud { left: 18px; right: 18px; } .conditions { max-width: 66%; } .rotate-hint { display: none; } .wind { padding-right: 8px; } .wind svg { width: 43px; } }
+@media (max-height: 500px) { #setup-message { top: 115px; width: auto; max-width: calc(100% - 36px); padding: 10px 14px; } #setup-message .notice-icon, #setup-message p { display: none; } }
+@media (prefers-reduced-transparency: reduce) { .glass { background: #1c2b38; backdrop-filter: none; } }

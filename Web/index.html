@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>WhenScape · Scene</title>
+  <link rel="stylesheet" href="./cesium/Widgets/widgets.css">
+  <link rel="stylesheet" href="./scene.css">
+</head>
+<body>
+  <main id="scene" aria-label="Ground-level scene. Drag to look around. Arrow keys rotate the view." tabindex="0"></main>
+  <canvas id="weather-effects" aria-hidden="true"></canvas>
+  <div class="top-hud">
+    <div class="scene-caption">
+      <div class="eyebrow"><span class="live-dot"></span> GROUND VIEW</div>
+      <h1 id="place-name">WhenScape</h1>
+      <div id="scene-coordinate" class="secondary">Choose a place on the map</div>
+    </div>
+    <button id="compass" class="glass compass" title="Face north" aria-label="Face north">
+      <svg viewBox="0 0 40 40" aria-hidden="true"><g id="compass-needle"><path d="M20 5 L25 26 L20 23 L15 26 Z" fill="#ecb37b"/><path d="M20 35 L15 14 L20 17 L25 14 Z" fill="#b9c4d0"/></g></svg>
+      <span id="heading">N · 0°</span>
+    </button>
+  </div>
+  <div id="setup-message" class="glass notice" role="status" hidden>
+    <div class="notice-icon">◇</div>
+    <div><strong id="notice-title">Connect geographic data</strong><p id="notice-body">Add a Cesium ion token in Settings to load real terrain and buildings. The sky is calculated for your selected place and time.</p></div>
+  </div>
+  <div id="fatal-message" class="glass notice" role="alert" hidden></div>
+  <div class="bottom-hud">
+    <div class="glass conditions">
+      <div class="eyebrow" id="weather-kind">WEATHER</div>
+      <div id="weather-summary">Loading conditions…</div>
+      <div class="secondary" id="weather-detail"></div>
+      <div id="snow-label" class="secondary" hidden>Illustrative white surfaces</div>
+      <div class="weather-actions">
+        <details id="weather-provenance"><summary>Data details</summary><div id="weather-source-detail"></div></details>
+        <button id="refresh-weather" type="button" title="Retry or refresh weather data">Refresh</button>
+      </div>
+      <a id="weather-attribution" href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer" hidden>Weather data by Open-Meteo</a>
+    </div>
+    <div class="glass wind" id="wind-indicator" hidden>
+      <svg viewBox="0 0 70 42" width="65" height="39" aria-hidden="true">
+        <path d="M12 39V5" stroke="#c8d2dc" stroke-width="2"/>
+        <g id="windsock"><path d="M13 7 L59 16 L59 23 L13 26 Z" fill="#ecaa72"/><path d="M23 9L23 24M36 12L36 24M49 15L49 23" stroke="#f6ece0" stroke-width="6"/></g>
+      </svg>
+      <div><span id="wind-speed"></span><small id="wind-direction"></small></div>
+    </div>
+  </div>
+  <div class="footnote"><span id="geometry-status">Preparing scene</span><span class="rotate-hint">Drag to look · ↑ ↓ ← →</span></div>
+  <script>window.CESIUM_BASE_URL = './cesium/';</script>
+  <script src="./cesium/Cesium.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

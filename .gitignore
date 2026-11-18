@@ -1,0 +1,10 @@
+.DS_Store
+.build/
+build/
+dist/
+node_modules/
+Sources/WhenScape/Resources/Web/
+artifacts/
+.swiftpm/
+.env*
+*.xcuserstate

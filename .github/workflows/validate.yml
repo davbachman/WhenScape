@@ -1,0 +1,21 @@
+name: Validate WhenScape
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  mac-app:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Build and test native app and scene
+        run: bash scripts/build-macos.sh
+      - name: Package app
+        run: |
+          app_path="$(cd build/WhenScape.app && pwd -P)"
+          ditto -c -k --sequesterRsrc --keepParent "$app_path" build/WhenScape-macOS.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WhenScape-macOS
+          path: build/WhenScape-macOS.zip
