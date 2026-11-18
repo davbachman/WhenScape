@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Sourced from the repository root. Astronomy Engine matches the existing web
-# app's version and is pinned to the source commit and hashes.
+# Sourced from the repository root. Astronomy Engine is pinned to the source
+# commit and hashes.
 SAVER_BUILD_DIR="$PWD/.build/saver"
 ASTRONOMY_DIR="$SAVER_BUILD_DIR/astronomy"
 SAVER_SOURCES="$PWD/Sources/WhenScapeSaver"
