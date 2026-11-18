@@ -36,3 +36,15 @@ jobs:
           name: WhenScape-saver-macOS
           path: build/WhenScape-saver-macOS.zip
           if-no-files-found: error
+      - name: Capture fixed scene previews
+        continue-on-error: true
+        run: |
+          mkdir -p build/saver-previews
+          for fixture in clear morning afternoon summer overcast fog rain snow snow-cover twilight moon cloudy-night; do
+            build/WhenScapePreview --fixture "$fixture" --capture "build/saver-previews/$fixture.png"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WhenScape-saver-previews
+          path: build/saver-previews/*.png
+          if-no-files-found: ignore

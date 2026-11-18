@@ -201,9 +201,11 @@ void makeDial(SCNNode* root, const Dial& dial, SCNMaterial* rim, SCNMaterial* st
     for (NSUInteger i = 0; i < hours.count; ++i) {
         const double a = markAngle(firstMinute + i*60);
         const Vec horizontal = east*std::cos(a) - trough*std::sin(a);
-        lettering(root, hours[i], 0.103, scalePoint(a, -0.101, 0.002), horizontal, pole, ink, YES);
+        const auto normal = inward(a, -0.101);
+        const auto vertical = (pole - normal * pole.dot(normal)).normalized();
+        lettering(root, hours[i], 0.103, scalePoint(a, -0.101, 0.012), horizontal, vertical, ink, YES);
     }
-    lettering(root, @"PST", 0.050, scalePoint(markAngle(720), 0.174, 0.002),
+    lettering(root, @"PST", 0.050, scalePoint(markAngle(720), 0.174, 0.008),
               (east*std::cos(longitudeOffset)-trough*std::sin(longitudeOffset)), pole, ink, NO);
 
     const Vec southAnchor = center - pole*1.10, northAnchor = center + pole*1.40;
@@ -235,6 +237,40 @@ void makeDial(SCNNode* root, const Dial& dial, SCNMaterial* rim, SCNMaterial* st
         i += facets+1;
     }
     meshNode(root, spindle, material({0.23, 0.24, 0.20})).castsShadow = NO;
+}
+
+void makeMonthGuide(SCNNode* root, SCNMaterial* ink) {
+    // Engraved outline of the annual analemma, as on the original dial.
+    const Vec plaque{0.92, 0.056, 1.14};
+    auto plaqueFace = material({0.68, 0.62, 0.47});
+    attach(root, [SCNBox boxWithWidth:0.32 height:0.03 length:0.43 chamferRadius:0.009],
+           plaqueFace, plaque - up*0.015);
+    const Vec chart = plaque + up*0.002;
+    const auto point = [&](double day) {
+        constexpr double noonOnJanuaryFirst = 1704139200; // 2024-01-01 12:00 PST.
+        const auto sun = skyAt(noonOnJanuaryFirst + 86400*day).sun;
+        const double hour = std::atan2(-sun.dot(east), -sun.dot(trough));
+        const double equation = markMinute(hour) - 720;
+        const double declination = std::asin(sun.dot(pole));
+        return chart + east*(equation * 0.0062) + north*(declination * 0.39);
+    };
+    Mesh groove;
+    for (int day = 0; day <= 366; day += 3) {
+        const auto at = point(day);
+        const auto tangent = point(day+0.1) - point(day-0.1);
+        const auto cross = tangent.cross(up).normalized()*0.0015;
+        const uint32_t i = static_cast<uint32_t>(groove.vertices.size());
+        groove.point(at-cross, up); groove.point(at+cross, up);
+        if (i) groove.quad(i-2, i-1, i+1, i);
+    }
+    meshNode(root, groove, ink).castsShadow = NO;
+    constexpr std::array<const char*, 12> initials = {"J","F","M","A","M","J","J","A","S","O","N","D"};
+    constexpr std::array<int, 12> monthDays = {14, 45, 74, 105, 135, 166, 196, 227, 258, 288, 319, 349};
+    for (size_t i = 0; i < initials.size(); ++i) {
+        const auto at = point(monthDays[i]);
+        lettering(root, @(initials[i]), 0.017, at + east*(i >= 2 && i <= 7 ? 0.021 : -0.021),
+                  east, north, ink, NO);
+    }
 }
 
 void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
@@ -318,6 +354,7 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
     plane.eulerAngles = SCNVector3Make(-sundial::pi/2, 0, 0);
     plane.castsShadow = NO;
     makePad(root, _pad, ink);
+    makeMonthGuide(root, ink);
     makeDial(root, _dial, _rim, stoneMaterial, _stoneTop, metal, ink);
 
     post(root, flagBase, flagTop + up*0.045, 0.022, metal);
@@ -365,7 +402,7 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
     const auto sky = skyAt(seconds);
     const auto air = atmosphere(sky, weather);
     _daylight = air.daylight;
-    _night = sky.sun.y <= 0;
+    _night = sky.sun.y < std::sin(radians(-0.833));
     const double sunlight = std::sqrt(unit(sky.sun.y*4)) * std::pow(1-air.cloud, 1.6) * (1-air.fog*0.8);
     _key.light.intensity = 1150*sunlight;
     _key.light.color = air.sunlight.native();

@@ -1,4 +1,5 @@
 #import <AppKit/AppKit.h>
+#import <SceneKit/SceneKit.h>
 
 #import "WhenScapeSaverView.h"
 
@@ -24,14 +25,16 @@ WhenScapeSaverView* loadSaver(NSString* path, NSRect frame, BOOL preview) {
 int main(int argc, const char* argv[]) {
     @autoreleasepool {
         NSString* fixture = nil;
+        NSString* capture = nil;
         BOOL smoke = NO, preview = NO;
         for (int i = 1; i < argc; ++i) {
             NSString* option = @(argv[i]);
             if ([option isEqualToString:@"--fixture"] && i+1 < argc) fixture = @(argv[++i]);
+            else if ([option isEqualToString:@"--capture"] && i+1 < argc) capture = @(argv[++i]);
             else if ([option isEqualToString:@"--system-size"]) preview = YES;
             else if ([option isEqualToString:@"--smoke"]) smoke = YES;
             else {
-                NSLog(@"Usage: WhenScapePreview [--fixture name] [--system-size] [--smoke]");
+                NSLog(@"Usage: WhenScapePreview [--fixture name] [--system-size] [--capture path] [--smoke]");
                 return 2;
             }
         }
@@ -89,6 +92,19 @@ int main(int argc, const char* argv[]) {
         [window makeKeyAndOrderFront:nil];
         [NSApp activateIgnoringOtherApps:YES];
         [view startAnimation];
+        if (capture) {
+            [window displayIfNeeded];
+            SCNView* scene = nil;
+            for (NSView* child in view.subviews) {
+                if ([child isKindOfClass:SCNView.class]) scene = (SCNView*)child;
+            }
+            NSImage* image = scene.snapshot;
+            NSData* pixels = image.TIFFRepresentation;
+            auto bitmap = pixels ? [[NSBitmapImageRep alloc] initWithData:pixels] : nil;
+            auto png = [bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+            [view stopAnimation];
+            return [png writeToFile:capture atomically:YES] ? 0 : 1;
+        }
         [NSApp run];
         for (id token in @[observer, wakeObserver, hideObserver]) {
             [NSNotificationCenter.defaultCenter removeObserver:token];

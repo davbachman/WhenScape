@@ -33,12 +33,12 @@ for arch in "${archs[@]}"; do
     slices+=("$stage/saver-$arch")
 done
 xcrun lipo -create "${slices[@]}" -output "$bundle/Contents/MacOS/WhenScapeSaver"
-xcrun lipo -verify_arch "${archs[@]}" "$bundle/Contents/MacOS/WhenScapeSaver"
+xcrun lipo "$bundle/Contents/MacOS/WhenScapeSaver" -verify_arch "${archs[@]}"
 codesign --force --sign - "$bundle"
 codesign --verify --strict "$bundle"
 
 xcrun clang++ -std=c++17 -O2 -fobjc-arc -mmacosx-version-min=14.0 -I"$SAVER_SOURCES" \
-    Support/WhenScapeSaver/Preview.mm -framework AppKit -framework ScreenSaver -o "$stage/WhenScapePreview"
+    Support/WhenScapeSaver/Preview.mm -framework AppKit -framework SceneKit -framework ScreenSaver -o "$stage/WhenScapePreview"
 mv -f "$stage/WhenScapePreview" "$product/WhenScapePreview"
 if [[ -e "$product/WhenScape.saver" ]]; then mv "$product/WhenScape.saver" "$stage/previous.saver"; fi
 mv "$bundle" "$product/WhenScape.saver"
