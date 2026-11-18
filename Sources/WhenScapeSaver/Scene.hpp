@@ -7,6 +7,7 @@
 #include "Weather.hpp"
 
 namespace sundial {
+constexpr double groundHeight = -0.046;
 inline const Vec cameraPosition{2.68, 2.63, 5.95};
 inline const Vec cameraTarget{0, 1.36, -0.05};
 inline const Vec cameraForward = (cameraTarget - cameraPosition).normalized();
@@ -26,7 +27,7 @@ struct Color {
     NSColor* native() const { return [NSColor colorWithSRGBRed:unit(r) green:unit(g) blue:unit(b) alpha:1]; }
 };
 
-enum class Surface { concrete, terrazzo, paving, earth, patina };
+enum class Surface { concrete, terrazzo, paving, earth, patina, gravel };
 NSImage* surfaceTexture(Surface surface, double snowCover = 0);
 NSImage* contactShadowTexture();
 

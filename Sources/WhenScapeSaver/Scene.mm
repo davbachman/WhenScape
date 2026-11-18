@@ -1,4 +1,5 @@
-#include "Scene.hpp"
+#include "Landscape.hpp"
+#include "SceneMesh.hpp"
 
 #include <array>
 #include <cstdint>
@@ -17,68 +18,12 @@ constexpr int scaleSegments = 240;
 
 double frac(double x) { return x - std::floor(x); }
 
-struct Mesh {
-    std::vector<SCNVector3> vertices, normals;
-    std::vector<uint32_t> indices;
-    std::vector<CGPoint> texcoords;
-    void point(Vec v, Vec n) {
-        vertices.push_back(sceneVector(v));
-        normals.push_back(sceneVector(n));
-    }
-    void texturedPoint(Vec v, Vec n, double u, double t) {
-        point(v, n);
-        texcoords.push_back(CGPointMake(u,t));
-    }
-    void quad(uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
-        indices.insert(indices.end(), {a,b,c, a,c,d});
-    }
-    SCNGeometry* geometry(SCNMaterial* material, BOOL lines = NO) const {
-        const auto source = [SCNGeometrySource geometrySourceWithVertices:vertices.data() count:vertices.size()];
-        const auto normal = [SCNGeometrySource geometrySourceWithNormals:normals.data() count:normals.size()];
-        NSData *data = [NSData dataWithBytes:indices.data() length:indices.size()*sizeof(uint32_t)];
-        auto element = [SCNGeometryElement geometryElementWithData:data
-            primitiveType:lines ? SCNGeometryPrimitiveTypeLine : SCNGeometryPrimitiveTypeTriangles
-            primitiveCount:indices.size()/(lines ? 2 : 3) bytesPerIndex:sizeof(uint32_t)];
-        NSArray<SCNGeometrySource*>* sources = @[source, normal];
-        if (!texcoords.empty()) {
-            auto uv = [SCNGeometrySource geometrySourceWithTextureCoordinates:texcoords.data() count:texcoords.size()];
-            sources = [sources arrayByAddingObject:uv];
-        }
-        auto result = [SCNGeometry geometryWithSources:sources elements:@[element]];
-        result.materials = @[material];
-        return result;
-    }
-};
-
-SCNMaterial* material(Color color, BOOL unlit = NO) {
-    auto m = [SCNMaterial material];
-    m.lightingModelName = unlit ? SCNLightingModelConstant : SCNLightingModelLambert;
-    m.diffuse.contents = color.native();
-    m.doubleSided = YES;
-    return m;
-}
-
-void applyTexture(SCNMaterial* material, NSImage* image, double repeats = 1) {
-    material.diffuse.contents = image;
-    material.diffuse.minificationFilter = SCNFilterModeLinear;
-    material.diffuse.mipFilter = SCNFilterModeLinear;
-    material.diffuse.maxAnisotropy = 8;
-    material.diffuse.wrapS = material.diffuse.wrapT = SCNWrapModeRepeat;
-    material.diffuse.contentsTransform = SCNMatrix4MakeScale(repeats, repeats, 1);
-}
-
 SCNMaterial* polishedMetal(Color color) {
     auto metal = material(color);
     metal.lightingModelName = SCNLightingModelBlinn;
     metal.specular.contents = Color{0.41, 0.36, 0.28}.native();
     metal.shininess = 0.32;
     return metal;
-}
-
-SCNNode* meshNode(SCNNode* parent, const Mesh& mesh, SCNMaterial* surface) {
-    auto node = [SCNNode nodeWithGeometry:mesh.geometry(surface)];
-    [parent addChildNode:node];
-    return node;
 }
 
 SCNNode* attach(SCNNode* parent, SCNGeometry* shape, SCNMaterial* surface, Vec at) {
@@ -324,6 +269,7 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
 
 @implementation SundialScene {
     SCNScene *_scene;
+    Landscape *_landscape;
     SCNNode *_camera, *_key, *_ambient, *_skyFill, *_moonlight, *_flag, *_shadow, *_rain, *_snow;
     SCNMaterial *_ground, *_pad, *_stoneTop, *_rim, *_fabric, *_shadowInk, *_rainInk, *_snowInk;
     Dial _dial;
@@ -387,9 +333,10 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
     contact.diffuse.contents = contactShadowTexture();
     contact.writesToDepthBuffer = NO;
     contact.blendMode = SCNBlendModeAlpha;
-    auto plane = attach(root, [SCNPlane planeWithWidth:220 height:220], _ground, {0, -0.046, 0});
+    auto plane = attach(root, [SCNPlane planeWithWidth:220 height:220], _ground, up*groundHeight);
     plane.eulerAngles = SCNVector3Make(-sundial::pi/2, 0, 0);
     plane.castsShadow = NO;
+    _landscape = [[Landscape alloc] initWithRoot:root];
     makePad(root, _pad, ink);
     makeMonthGuide(root, ink);
     makeDial(root, _dial, _rim, stoneMaterial, _stoneTop, metal, contact);
@@ -478,6 +425,7 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
         applyTexture(_pad, surfaceTexture(Surface::paving, cover*0.83));
         applyTexture(_stoneTop, surfaceTexture(Surface::concrete, cover));
         applyTexture(_rim, surfaceTexture(Surface::concrete, cover*0.62), 3);
+        [_landscape updateSnowCover:cover];
     }
     _scene.fogColor = air.horizon.native();
     _scene.fogStartDistance = (1-air.fog)*7.8 + 0.8;
@@ -501,6 +449,7 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
     if (_motionInitialized && extension == 0 && _rainfall == 0 && _flakes == 0) return NO;
     _motionInitialized = true;
     Vec direction = speed > 0.25 ? wind->downwind : east;
+    [_landscape updateGrassAt:t windSpeed:speed downwind:direction preview:_preview];
     const auto across = direction.cross(up);
     Mesh flag;
     constexpr int columns = 24, rows = 6;

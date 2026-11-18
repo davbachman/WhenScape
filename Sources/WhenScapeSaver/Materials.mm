@@ -36,6 +36,7 @@ Finish finishFor(Surface surface) {
     case Surface::paving: return {{0.66, 0.62, 0.53}, {0.48, 0.44, 0.36}, 0.119, 0.052, 0.085, 0.28};
     case Surface::earth: return {{0.38, 0.41, 0.36}, {0.31, 0.34, 0.28}, 0.073, 0.037, 0.070, 0.33};
     case Surface::patina: return {{0.30, 0.31, 0.26}, {0.20, 0.34, 0.29}, 0.117, 0.041, 0.075, 0.45};
+    case Surface::gravel: return {{0.65, 0.59, 0.47}, {0.44, 0.42, 0.34}, 0.08, 0.07, 0.18, 0.30};
     }
 }
 
@@ -113,8 +114,16 @@ NSImage* surfaceTexture(Surface surface, double snowCover) {
                 (1-snowCover*0.61);
             const auto color = base.mix(finish.aggregate, aggregate*finish.aggregateStrength*(1-snowCover*0.93))
                 + Color{variance,variance,variance};
+            double alpha = 1;
+            if (surface == Surface::gravel) {
+                // Feather the edges where the chips scatter into the soil.
+                const double edge = 0.487 - 0.065*mottling(u,v,8,16,seed+1);
+                const double feather = unit((edge - std::abs(u-0.5) + fine*0.048)/0.084);
+                alpha = feather*feather*(3-2*feather);
+            }
             auto p = pixels+4*(y*w+x);
-            p[0]=unit(color.r)*255; p[1]=unit(color.g)*255; p[2]=unit(color.b)*255; p[3]=255;
+            p[0]=unit(color.r)*alpha*255; p[1]=unit(color.g)*alpha*255;
+            p[2]=unit(color.b)*alpha*255; p[3]=alpha*255;
         }
     }
     if (scale) engraveScale(context, w, h);
