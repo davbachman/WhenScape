@@ -26,16 +26,16 @@ double mottling(double u, double v, unsigned columns, unsigned rows, unsigned se
 
 struct Finish {
     Color base, aggregate;
-    double variation, grainStrength, aggregateStrength;
+    double variation, mottlingStrength, grainStrength, aggregateStrength;
 };
 
 Finish finishFor(Surface surface) {
     switch (surface) {
-    case Surface::concrete: return {{0.66, 0.62, 0.55}, {0.47, 0.43, 0.37}, 0.16, 0.13, 0.35};
-    case Surface::terrazzo: return {{0.84, 0.81, 0.74}, {0.48, 0.43, 0.36}, 0.07, 0.08, 0.42};
-    case Surface::paving: return {{0.66, 0.61, 0.52}, {0.48, 0.43, 0.33}, 0.21, 0.12, 0.35};
-    case Surface::earth: return {{0.39, 0.40, 0.34}, {0.33, 0.31, 0.24}, 0.24, 0.13, 0.50};
-    case Surface::patina: return {{0.32, 0.33, 0.28}, {0.24, 0.36, 0.30}, 0.28, 0.09, 0.45};
+    case Surface::concrete: return {{0.68, 0.64, 0.56}, {0.53, 0.49, 0.43}, 0.078, 0.041, 0.081, 0.23};
+    case Surface::terrazzo: return {{0.86, 0.83, 0.75}, {0.49, 0.44, 0.38}, 0.052, 0.033, 0.061, 0.29};
+    case Surface::paving: return {{0.66, 0.62, 0.53}, {0.48, 0.44, 0.36}, 0.119, 0.052, 0.085, 0.28};
+    case Surface::earth: return {{0.38, 0.41, 0.36}, {0.31, 0.34, 0.28}, 0.073, 0.037, 0.070, 0.33};
+    case Surface::patina: return {{0.30, 0.31, 0.26}, {0.20, 0.34, 0.29}, 0.117, 0.041, 0.075, 0.45};
     }
 }
 
@@ -108,7 +108,8 @@ NSImage* surfaceTexture(Surface surface, double snowCover) {
             const double medium = mottling(u,v,scale ? 212 : 48,48,seed+11)-0.5;
             const double fine = grain(x,y,seed+29)-0.5;
             const double aggregate = unit(-0.70 + 2.9*mottling(u,v,scale ? 560 : 125,96,seed+53));
-            const double variance = (coarse*finish.variation + medium*0.11 + fine*finish.grainStrength) *
+            const double variance = (coarse*finish.variation + medium*finish.mottlingStrength +
+                fine*finish.grainStrength) *
                 (1-snowCover*0.61);
             const auto color = base.mix(finish.aggregate, aggregate*finish.aggregateStrength*(1-snowCover*0.93))
                 + Color{variance,variance,variance};

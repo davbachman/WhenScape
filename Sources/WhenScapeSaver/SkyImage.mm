@@ -94,8 +94,8 @@ NSBitmapImageRep* skyImage(const Sky& sky, const Atmosphere& air, double seconds
                 cloudAlpha = smooth(threshold-0.08, threshold+0.12, field) * smooth(0, 0.055, ray.y);
                 cloudAlpha = unit(cloudAlpha * (1-air.fog*0.40) * smooth(0, 0.14, air.cloud));
                 const double sunDot = std::max(0.0, sky.sun.dot(ray));
-                const double warmHaze = air.twilight*0.29*std::exp(-std::pow((ray.y-0.022)/0.057, 2)) *
-                    (1-air.cloud*0.65)*(1-air.fog*0.45);
+                const double warmHaze = air.twilight*0.29*std::exp(-std::pow((ray.y-0.045)/0.063, 2)) *
+                    smooth(0, 0.029, ray.y)*(1-air.cloud*0.65)*(1-air.fog*0.45);
                 color = color.mix({0.94, 0.57, 0.43}, warmHaze);
                 color = color.mix(air.sunlight, std::pow(sunDot, 16)*sunHaze);
                 if (sky.sun.y > 0) color = color.mix({1, 0.95, 0.78},

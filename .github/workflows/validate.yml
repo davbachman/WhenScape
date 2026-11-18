@@ -31,6 +31,7 @@ jobs:
           for fixture in clear morning afternoon summer overcast fog rain snow snow-cover twilight moon cloudy-night; do
             build/WhenScapePreview --fixture "$fixture" --capture "build/saver-previews/$fixture.png"
           done
+          build/WhenScapePreview --fixture clear --system-size --capture build/saver-previews/clear-system-size.png
       - uses: actions/upload-artifact@v6
         with:
           name: WhenScape-saver-previews

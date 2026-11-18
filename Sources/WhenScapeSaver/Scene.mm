@@ -156,7 +156,7 @@ Mesh scaleSurface(double q1, double q2, double inset1, double inset2, bool outsi
             const auto n = q1 == q2 ? pole * (inset2 < inset1 ? 1 : -1)
                                    : inward(a, q) * (outside ? -1 : 1);
             const auto at = scalePoint(a, q, inset1 + (inset2-inset1)*f);
-            mesh.texturedPoint(at, n, static_cast<double>(i)/scaleSegments, f);
+            mesh.texturedPoint(at, n, static_cast<double>(i)/scaleSegments, 1-f);
             if (i && j) {
                 const uint32_t k = i*(rows+1)+j;
                 if (outside) mesh.quad(k-rows-2,k-1,k,k-rows-1);
