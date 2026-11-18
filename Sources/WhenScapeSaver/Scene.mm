@@ -7,14 +7,10 @@ using namespace sundial;
 
 namespace {
 
-constexpr Color stone{0.59, 0.55, 0.48};
-constexpr Color face{0.79, 0.75, 0.65};
-constexpr Color ground{0.39, 0.42, 0.39};
-constexpr Color pad{0.59, 0.55, 0.48};
-constexpr Color snow{0.91, 0.94, 0.96};
-constexpr Color inlay{0.18, 0.20, 0.18};
-constexpr Color bronze{0.36, 0.29, 0.18};
-constexpr Color blueGreen{0.20, 0.38, 0.38};
+constexpr Color stone{0.66, 0.62, 0.55};
+constexpr Color inlay{0.21, 0.18, 0.13};
+constexpr Color bronze{0.46, 0.36, 0.23};
+constexpr Color blueGreen{0.15, 0.34, 0.31};
 constexpr Vec flagBase{-2.0, 0, -0.77};
 constexpr Vec flagTop = {flagBase.x, 2.82, flagBase.z};
 constexpr int scaleSegments = 240;
@@ -24,9 +20,14 @@ double frac(double x) { return x - std::floor(x); }
 struct Mesh {
     std::vector<SCNVector3> vertices, normals;
     std::vector<uint32_t> indices;
+    std::vector<CGPoint> texcoords;
     void point(Vec v, Vec n) {
         vertices.push_back(sceneVector(v));
         normals.push_back(sceneVector(n));
+    }
+    void texturedPoint(Vec v, Vec n, double u, double t) {
+        point(v, n);
+        texcoords.push_back(CGPointMake(u,t));
     }
     void quad(uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
         indices.insert(indices.end(), {a,b,c, a,c,d});
@@ -38,7 +39,12 @@ struct Mesh {
         auto element = [SCNGeometryElement geometryElementWithData:data
             primitiveType:lines ? SCNGeometryPrimitiveTypeLine : SCNGeometryPrimitiveTypeTriangles
             primitiveCount:indices.size()/(lines ? 2 : 3) bytesPerIndex:sizeof(uint32_t)];
-        auto result = [SCNGeometry geometryWithSources:@[source, normal] elements:@[element]];
+        NSArray<SCNGeometrySource*>* sources = @[source, normal];
+        if (!texcoords.empty()) {
+            auto uv = [SCNGeometrySource geometrySourceWithTextureCoordinates:texcoords.data() count:texcoords.size()];
+            sources = [sources arrayByAddingObject:uv];
+        }
+        auto result = [SCNGeometry geometryWithSources:sources elements:@[element]];
         result.materials = @[material];
         return result;
     }
@@ -50,6 +56,23 @@ SCNMaterial* material(Color color, BOOL unlit = NO) {
     m.diffuse.contents = color.native();
     m.doubleSided = YES;
     return m;
+}
+
+void applyTexture(SCNMaterial* material, NSImage* image, double repeats = 1) {
+    material.diffuse.contents = image;
+    material.diffuse.minificationFilter = SCNFilterModeLinear;
+    material.diffuse.mipFilter = SCNFilterModeLinear;
+    material.diffuse.maxAnisotropy = 8;
+    material.diffuse.wrapS = material.diffuse.wrapT = SCNWrapModeRepeat;
+    material.diffuse.contentsTransform = SCNMatrix4MakeScale(repeats, repeats, 1);
+}
+
+SCNMaterial* polishedMetal(Color color) {
+    auto metal = material(color);
+    metal.lightingModelName = SCNLightingModelBlinn;
+    metal.specular.contents = Color{0.41, 0.36, 0.28}.native();
+    metal.shininess = 0.32;
+    return metal;
 }
 
 SCNNode* meshNode(SCNNode* parent, const Mesh& mesh, SCNMaterial* surface) {
@@ -90,6 +113,19 @@ void basis(SCNNode* node, Vec x, Vec y, Vec z, Vec at) {
     node.transform = matrix;
 }
 
+void aimLight(SCNNode* light, Vec direction) {
+    const auto right = std::abs(direction.y) > 0.9999 ? east : up.cross(direction).normalized();
+    basis(light, right, direction.cross(right), direction, center + direction*6);
+}
+
+void contactShadow(SCNNode* root, SCNMaterial* ink, Vec position, double width, double length) {
+    auto plane = [SCNPlane planeWithWidth:width height:length];
+    auto shadow = attach(root, plane, ink, position);
+    shadow.eulerAngles = SCNVector3Make(-sundial::pi/2, 0, 0);
+    shadow.castsShadow = NO;
+    shadow.renderingOrder = 1;
+}
+
 void lettering(SCNNode* parent, NSString* text, double height, Vec at, Vec x, Vec vertical,
                SCNMaterial* ink, BOOL serif) {
     auto glyph = [SCNText textWithString:text extrusionDepth:0];
@@ -119,7 +155,8 @@ Mesh scaleSurface(double q1, double q2, double inset1, double inset2, bool outsi
             const double q = q1 + (q2-q1)*f;
             const auto n = q1 == q2 ? pole * (inset2 < inset1 ? 1 : -1)
                                    : inward(a, q) * (outside ? -1 : 1);
-            mesh.point(scalePoint(a, q, inset1 + (inset2-inset1)*f), n);
+            const auto at = scalePoint(a, q, inset1 + (inset2-inset1)*f);
+            mesh.texturedPoint(at, n, static_cast<double>(i)/scaleSegments, f);
             if (i && j) {
                 const uint32_t k = i*(rows+1)+j;
                 if (outside) mesh.quad(k-rows-2,k-1,k,k-rows-1);
@@ -135,22 +172,13 @@ Mesh annulus(double inner, double outer, double height) {
     for (int i = 0; i <= 120; ++i) {
         const double a = 2*sundial::pi*i/120;
         const Vec direction{std::sin(a), 0, std::cos(a)};
-        mesh.point(direction*inner + up*height, up);
-        mesh.point(direction*outer + up*height, up);
+        for (const double r : {inner, outer}) {
+            const auto at = direction*r + up*height;
+            mesh.texturedPoint(at, up, 0.5+at.x/4.1, 0.5+at.z/4.1);
+        }
         if (i) mesh.quad(2*i-2, 2*i-1, 2*i+1, 2*i);
     }
     return mesh;
-}
-
-void faceMark(Mesh& mesh, double angle, double angularWidth, double start, double end) {
-    const double a = angle-angularWidth*0.5, b = angle+angularWidth*0.5;
-    const uint32_t i = static_cast<uint32_t>(mesh.vertices.size());
-    const auto n = inward(angle, (start+end)*0.5);
-    mesh.point(scalePoint(a, start, 0.0018), n);
-    mesh.point(scalePoint(b, start, 0.0018), n);
-    mesh.point(scalePoint(b, end, 0.0018), n);
-    mesh.point(scalePoint(a, end, 0.0018), n);
-    mesh.quad(i, i+1, i+2, i+3);
 }
 
 Mesh shadowMesh(const ShadowBand& shadow) {
@@ -171,43 +199,24 @@ Mesh shadowMesh(const ShadowBand& shadow) {
 }
 
 void makeDial(SCNNode* root, const Dial& dial, SCNMaterial* rim, SCNMaterial* stoneMaterial,
-              SCNMaterial* snowMaterial, SCNMaterial* metal, SCNMaterial* ink) {
-    meshNode(root, scaleSurface(-halfWidth, halfWidth, 0, 0), material(face));
+              SCNMaterial* snowMaterial, SCNMaterial* metal, SCNMaterial* contact) {
+    auto scale = material(stone);
+    applyTexture(scale, surfaceTexture(Surface::terrazzo));
+    scale.diffuse.wrapS = scale.diffuse.wrapT = SCNWrapModeClamp;
+    meshNode(root, scaleSurface(-halfWidth, halfWidth, 0, 0), scale);
     meshNode(root, scaleSurface(-halfWidth, halfWidth, -0.12, -0.12, true), stoneMaterial);
     meshNode(root, scaleSurface(-halfWidth, -halfWidth, -0.12, 0), rim);
     meshNode(root, scaleSurface(halfWidth, halfWidth, 0, -0.12), rim);
     for (double a : {startAngle, endAngle}) {
         Mesh end;
         const auto n = (east*std::cos(a)-trough*std::sin(a)) * (a == startAngle ? -1 : 1);
-        end.point(scalePoint(a, -halfWidth), n); end.point(scalePoint(a, halfWidth), n);
-        end.point(scalePoint(a, halfWidth, -0.12), n); end.point(scalePoint(a, -halfWidth, -0.12), n);
+        end.texturedPoint(scalePoint(a, -halfWidth), n, 0, 0);
+        end.texturedPoint(scalePoint(a, halfWidth), n, 1, 0);
+        end.texturedPoint(scalePoint(a, halfWidth, -0.12), n, 1, 1);
+        end.texturedPoint(scalePoint(a, -halfWidth, -0.12), n, 0, 1);
         end.quad(0, 1, 2, 3);
         meshNode(root, end, rim);
     }
-    auto outline = material({0.38, 0.34, 0.27});
-    meshNode(root, scaleSurface(-0.220, -0.216, 0.0018, 0.0018), outline).castsShadow = NO;
-    meshNode(root, scaleSurface(0.216, 0.220, 0.0018, 0.0018), outline).castsShadow = NO;
-    meshNode(root, scaleSurface(-0.003, 0.003, 0.0018, 0.0018), outline).castsShadow = NO;
-
-    Mesh ticks;
-    for (int m = firstMinute; m <= lastMinute; m += 5) {
-        const bool hour = m % 60 == 0, quarter = m % 15 == 0, half = m % 30 == 0;
-        const double tickLength = hour ? 0.124 : half ? 0.092 : quarter ? 0.070 : 0.046;
-        faceMark(ticks, markAngle(m), hour ? 0.0075 : quarter ? 0.0048 : 0.0031, 0, tickLength);
-    }
-    meshNode(root, ticks, ink).castsShadow = NO;
-    NSArray<NSString*> *hours = @[@"VI", @"VII", @"VIII", @"IX", @"X", @"XI", @"XII",
-                                  @"I", @"II", @"III", @"IV", @"V", @"VI"];
-    for (NSUInteger i = 0; i < hours.count; ++i) {
-        const double a = markAngle(firstMinute + i*60);
-        const Vec horizontal = east*std::cos(a) - trough*std::sin(a);
-        const auto normal = inward(a, -0.101);
-        const auto vertical = (pole - normal * pole.dot(normal)).normalized();
-        lettering(root, hours[i], 0.103, scalePoint(a, -0.101, 0.012), horizontal, vertical, ink, YES);
-    }
-    lettering(root, @"PST", 0.050, scalePoint(markAngle(720), 0.174, 0.008),
-              (east*std::cos(longitudeOffset)-trough*std::sin(longitudeOffset)), pole, ink, NO);
-
     const Vec southAnchor = center - pole*1.10, northAnchor = center + pole*1.40;
     post(root, southAnchor, northAnchor, 0.0035, metal).castsShadow = NO;
     for (int i : {-1, 1}) {
@@ -219,10 +228,12 @@ void makeDial(SCNNode* root, const Dial& dial, SCNMaterial* rim, SCNMaterial* st
         auto pier = [SCNNode nodeWithGeometry:pedestal];
         pier.position = sceneVector({0, at.y*0.5 + 0.02, foot});
         [root addChildNode:pier];
+        contactShadow(root, contact, {0, 0.034, foot}, i < 0 ? 0.77 : 1.01, i < 0 ? 0.68 : 0.87);
         post(root, at, at + Vec{0, -0.075, foot-at.z}, 0.054, metal);
     }
     auto block = [SCNBox boxWithWidth:0.34 height:0.45 length:0.38 chamferRadius:0.038];
     attach(root, block, stoneMaterial, {0, 0.25, -0.64});
+    contactShadow(root, contact, {0, 0.034, -0.64}, 0.75, 0.79);
 
     Mesh spindle;
     constexpr uint32_t facets = 40;
@@ -231,18 +242,21 @@ void makeDial(SCNNode* root, const Dial& dial, SCNMaterial* rim, SCNMaterial* st
         for (uint32_t j = 0; j <= facets; ++j) {
             const double a = 2*sundial::pi*j/facets;
             const auto radial = east*std::cos(a) + trough*std::sin(a);
-            spindle.point(center + pole*ring.axial + radial*ring.radius, radial);
+            spindle.texturedPoint(center + pole*ring.axial + radial*ring.radius, radial,
+                                  static_cast<double>(j)/facets, 0.5+ring.axial);
             if (i && j) spindle.quad(i+j-facets-2, i+j-facets-1, i+j, i+j-1);
         }
         i += facets+1;
     }
-    meshNode(root, spindle, material({0.23, 0.24, 0.20})).castsShadow = NO;
+    auto spindleSurface = polishedMetal(bronze);
+    applyTexture(spindleSurface, surfaceTexture(Surface::patina));
+    meshNode(root, spindle, spindleSurface).castsShadow = NO;
 }
 
 void makeMonthGuide(SCNNode* root, SCNMaterial* ink) {
     // Engraved outline of the annual analemma, as on the original dial.
     const Vec plaque{0.92, 0.056, 1.14};
-    auto plaqueFace = material({0.68, 0.62, 0.47});
+    auto plaqueFace = polishedMetal({0.68, 0.56, 0.36});
     attach(root, [SCNBox boxWithWidth:0.32 height:0.03 length:0.43 chamferRadius:0.009],
            plaqueFace, plaque - up*0.015);
     const Vec chart = plaque + up*0.002;
@@ -276,8 +290,13 @@ void makeMonthGuide(SCNNode* root, SCNMaterial* ink) {
 void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
     auto disk = [SCNCylinder cylinderWithRadius:2.03 height:0.07];
     disk.radialSegmentCount = 120;
-    attach(root, disk, material({0.43, 0.40, 0.33}), {0, -0.010, 0});
-    meshNode(root, annulus(0, 2.027, 0.026), top);
+    auto edge = material(stone);
+    applyTexture(edge, surfaceTexture(Surface::paving), 4);
+    attach(root, disk, edge, {0, -0.014, 0});
+    auto bevel = [SCNCone coneWithTopRadius:2.004 bottomRadius:2.03 height:0.017];
+    bevel.radialSegmentCount = 120;
+    attach(root, bevel, edge, {0, 0.016, 0});
+    meshNode(root, annulus(0, 2.003, 0.026), top);
     for (double r : {1.46, 1.93}) meshNode(root, annulus(r, r+0.008, 0.028), engrave).castsShadow = NO;
     Mesh marks;
     for (int i = 0; i < 72; ++i) {
@@ -305,11 +324,12 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
 
 @implementation SundialScene {
     SCNScene *_scene;
-    SCNNode *_camera, *_key, *_ambient, *_flag, *_shadow, *_rain, *_snow;
+    SCNNode *_camera, *_key, *_ambient, *_skyFill, *_moonlight, *_flag, *_shadow, *_rain, *_snow;
     SCNMaterial *_ground, *_pad, *_stoneTop, *_rim, *_fabric, *_shadowInk, *_rainInk, *_snowInk;
     Dial _dial;
     Weather _weather;
     double _daylight, _rainfall, _flakes;
+    int _coverStep;
     bool _night, _readable, _motionInitialized;
     BOOL _preview;
     ReadingEdge _readingEdge;
@@ -334,7 +354,7 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
     _key.light.type = SCNLightTypeDirectional;
     _key.light.shadowMode = SCNShadowModeForward;
     _key.light.shadowMapSize = CGSizeMake(1024, 1024);
-    _key.light.shadowSampleCount = 4;
+    _key.light.shadowSampleCount = 8;
     _key.light.shadowBias = 0.025;
     _key.light.orthographicScale = 6;
     [root addChildNode:_key];
@@ -343,19 +363,37 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
     _ambient.light.type = SCNLightTypeAmbient;
     [root addChildNode:_ambient];
 
-    _ground = material(ground);
-    _pad = material(pad);
+    _skyFill = [SCNNode node];
+    _skyFill.light = [SCNLight light];
+    _skyFill.light.type = SCNLightTypeDirectional;
+    aimLight(_skyFill, Vec{-0.32, 0.78, 0.50}.normalized());
+    [root addChildNode:_skyFill];
+    _moonlight = [SCNNode node];
+    _moonlight.light = [SCNLight light];
+    _moonlight.light.type = SCNLightTypeDirectional;
+    _moonlight.light.color = Color{0.70, 0.79, 1.0}.native();
+    [root addChildNode:_moonlight];
+
+    _coverStep = -1;
+    _ground = material(stone);
+    _pad = material(stone);
     _stoneTop = material(stone);
     _rim = material(stone);
     auto stoneMaterial = material(stone);
+    applyTexture(stoneMaterial, surfaceTexture(Surface::concrete));
     auto ink = material(inlay);
-    auto metal = material(bronze);
+    auto metal = polishedMetal(bronze);
+    auto contact = material({0.16, 0.15, 0.12}, YES);
+    contact.diffuse.contents = contactShadowTexture();
+    contact.writesToDepthBuffer = NO;
+    contact.blendMode = SCNBlendModeAlpha;
     auto plane = attach(root, [SCNPlane planeWithWidth:220 height:220], _ground, {0, -0.046, 0});
     plane.eulerAngles = SCNVector3Make(-sundial::pi/2, 0, 0);
     plane.castsShadow = NO;
     makePad(root, _pad, ink);
     makeMonthGuide(root, ink);
-    makeDial(root, _dial, _rim, stoneMaterial, _stoneTop, metal, ink);
+    makeDial(root, _dial, _rim, stoneMaterial, _stoneTop, metal, contact);
+    contactShadow(root, contact, flagBase-up*0.040, 0.48, 0.48);
 
     post(root, flagBase, flagTop + up*0.045, 0.022, metal);
     attach(root, [SCNSphere sphereWithRadius:0.036], metal, flagTop + up*0.043);
@@ -404,15 +442,20 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
     _daylight = air.daylight;
     _night = sky.sun.y < std::sin(radians(-0.833));
     const double sunlight = std::sqrt(unit(sky.sun.y*4)) * std::pow(1-air.cloud, 1.6) * (1-air.fog*0.8);
-    _key.light.intensity = 1150*sunlight;
+    _key.light.intensity = 1010*sunlight;
     _key.light.color = air.sunlight.native();
     _key.light.castsShadow = !preview && sunlight > 0.1;
-    _key.light.shadowRadius = 1.6 + air.cloud*5;
-    _key.light.shadowColor = [NSColor colorWithSRGBRed:0.06 green:0.10 blue:0.15 alpha:0.55 * sunlight];
-    const Vec lightRight = std::abs(sky.sun.y) > 0.9999 ? east : up.cross(sky.sun).normalized();
-    basis(_key, lightRight, sky.sun.cross(lightRight), sky.sun, center + sky.sun*6);
-    _ambient.light.intensity = 225 + air.daylight*(405 + 180*air.cloud) + air.twilight*110;
-    _ambient.light.color = Color{0.45, 0.58, 0.86}.mix({0.93, 0.95, 0.99}, air.daylight).native();
+    _key.light.shadowRadius = 2.1 + air.cloud*4.5;
+    _key.light.shadowColor = [NSColor colorWithSRGBRed:0.10 green:0.12 blue:0.16 alpha:0.52 * sunlight];
+    aimLight(_key, sky.sun);
+    _ambient.light.intensity = 296 + air.daylight*(251 + 125*air.cloud) + air.twilight*94;
+    _ambient.light.color = Color{0.50, 0.61, 0.83}.mix({0.91, 0.94, 0.99}, air.daylight).native();
+    _skyFill.light.intensity = (140 + air.daylight*102)*(1-air.fog*0.34);
+    _skyFill.light.color = Color{0.51, 0.63, 0.86}.mix({0.78, 0.85, 0.97}, air.daylight).native();
+    const double lunarElevation = std::sqrt(unit(sky.moon.y*3.5));
+    _moonlight.light.intensity = 245 * lunarElevation * sky.moonFraction * (1-air.daylight) *
+        std::pow(1-air.cloud, 1.5) * (1-air.fog);
+    if (sky.moon.y > 0) aimLight(_moonlight, sky.moon);
 
     const auto band = _dial.shadow(sky.sun, seconds);
     _readable = false;
@@ -427,15 +470,19 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
             inward(a, 0).dot(cameraPosition - scalePoint(a, 0)) > 0.05;
     }
 
-    const double cover = weather.cover();
-    _ground.diffuse.contents = ground.mix(snow, cover * 0.92).native();
-    _pad.diffuse.contents = pad.mix(snow, cover * 0.83).native();
-    _stoneTop.diffuse.contents = stone.mix(snow, cover).native();
-    _rim.diffuse.contents = stone.mix(snow, cover * 0.62).native();
+    const int coverStep = std::lround(weather.cover()*12);
+    if (_coverStep != coverStep) {
+        _coverStep = coverStep;
+        const double cover = coverStep/12.0;
+        applyTexture(_ground, surfaceTexture(Surface::earth, cover*0.92), 34);
+        applyTexture(_pad, surfaceTexture(Surface::paving, cover*0.83));
+        applyTexture(_stoneTop, surfaceTexture(Surface::concrete, cover));
+        applyTexture(_rim, surfaceTexture(Surface::concrete, cover*0.62), 3);
+    }
     _scene.fogColor = air.horizon.native();
-    _scene.fogStartDistance = (1-air.fog)*14 + 0.8;
-    _scene.fogEndDistance = 105*std::pow(1-air.fog, 2.6) + 7;
-    _scene.fogDensityExponent = 1.15;
+    _scene.fogStartDistance = (1-air.fog)*7.8 + 0.8;
+    _scene.fogEndDistance = 91*std::pow(1-air.fog, 2.6) + 7;
+    _scene.fogDensityExponent = 1.45;
 
     if (size.width > 0 && size.height > 0) {
         const auto aspect = size.width/size.height;
@@ -457,6 +504,8 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
     const auto across = direction.cross(up);
     Mesh flag;
     constexpr int columns = 24, rows = 6;
+    std::array<Vec, (columns+1)*(rows+1)> cloth;
+    const auto index = [=](int i, int j) { return j*(columns+1)+i; };
     for (int j = 0; j <= rows; ++j) {
         double v = static_cast<double>(j)/rows;
         for (int i = 0; i <= columns; ++i) {
@@ -467,11 +516,16 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
             const auto at = flagTop + direction*(stream + 0.021) - up*(drop + 0.09)
                 + across*(0.12*extension*wave*u + 0.054*(1-extension)*std::sin(8*(u+v))*u)
                 + up*(wave*u*extension*0.045)-(across*0.024*v*(1-extension));
-            flag.point(at, across);
-            if (i && j) {
-                const uint32_t k = j*(columns+1)+i;
-                flag.quad(k-columns-2, k-columns-1, k, k-1);
-            }
+            cloth[index(i,j)] = at;
+        }
+    }
+    for (int j = 0; j <= rows; ++j) {
+        for (int i = 0; i <= columns; ++i) {
+            const auto alongCloth = cloth[index(std::min(i+1,columns),j)] - cloth[index(std::max(i-1,0),j)];
+            const auto downCloth = cloth[index(i,std::min(j+1,rows))] - cloth[index(i,std::max(j-1,0))];
+            const uint32_t k = index(i,j);
+            flag.point(cloth[k], downCloth.cross(alongCloth).normalized());
+            if (i && j) flag.quad(k-columns-2, k-columns-1, k, k-1);
         }
     }
     _flag.geometry = flag.geometry(_fabric);

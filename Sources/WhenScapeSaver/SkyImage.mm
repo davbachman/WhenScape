@@ -45,12 +45,13 @@ Atmosphere atmosphere(const Sky& sky, const Weather& weather) {
     const double day = smooth(-4, 16, elevation);
     const double twilight = smooth(-13, -1, elevation) * (1-smooth(1, 14, elevation));
     const double cloud = weather.cloudiness(), fog = weather.fog();
-    Color horizon = Color{0.10, 0.15, 0.24}.mix({0.72, 0.82, 0.88}, day);
-    horizon = horizon.mix({0.74, 0.37, 0.24}, twilight*0.7*(1-cloud*0.7));
-    horizon = horizon.mix(Color{0.17, 0.21, 0.28}.mix({0.68, 0.73, 0.74}, day), cloud*0.5 + fog*0.4);
-    Color zenith = Color{0.021, 0.041, 0.092}.mix({0.21, 0.43, 0.64}, day);
-    zenith = zenith.mix(Color{0.10, 0.13, 0.19}.mix({0.52, 0.61, 0.70}, day), cloud*0.60);
-    const Color sunlight = Color{1, 0.59, 0.32}.mix({1, 0.95, 0.85}, smooth(0, 28, elevation));
+    Color horizon = Color{0.12, 0.17, 0.26}.mix({0.81, 0.86, 0.87}, day);
+    horizon = horizon.mix({0.78, 0.43, 0.35}, twilight*0.64*(1-cloud*0.7));
+    horizon = horizon.mix(Color{0.18, 0.22, 0.28}.mix({0.71, 0.76, 0.77}, day), cloud*0.53 + fog*0.37);
+    Color zenith = Color{0.027, 0.046, 0.096}.mix({0.15, 0.35, 0.55}, day);
+    zenith = zenith.mix({0.16, 0.21, 0.39}, twilight*0.51);
+    zenith = zenith.mix(Color{0.096, 0.125, 0.185}.mix({0.48, 0.57, 0.65}, day), cloud*0.58);
+    const Color sunlight = Color{1, 0.65, 0.43}.mix({1, 0.95, 0.85}, smooth(0, 32, elevation));
     return {day, twilight, cloud, fog, (1-smooth(-16, -7, elevation)) * (1-fog*0.85),
             horizon, zenith, sunlight};
 }
@@ -63,7 +64,7 @@ NSBitmapImageRep* skyImage(const Sky& sky, const Atmosphere& air, double seconds
     auto pixels = bitmap.bitmapData;
     const double spread = std::tan(radians(frameFOV(aspect) / 2));
     const double drift = std::fmod(seconds, 60*60*24*30) * 0.0025;
-    const double sunHaze = 0.19 * (air.daylight + air.twilight*0.6) * (1-air.cloud*0.9);
+    const double sunHaze = 0.23 * (air.daylight + air.twilight*0.8) * (1-air.cloud*0.86);
     std::vector<double> obscuration(w*h);
 
     const double phaseCos = std::clamp(2 * sky.moonFraction - 1, -1.0, 1.0);
@@ -78,24 +79,32 @@ NSBitmapImageRep* skyImage(const Sky& sky, const Atmosphere& air, double seconds
         for (int x = 0; x < w; ++x) {
             Vec ray = (cameraForward + cameraRight * ((2.0*(x + 0.5)/w - 1)*aspect*spread)
                        + cameraUp * ((1 - 2.0*(y + 0.5)/h)*spread)).normalized();
-            const double lift = smooth(0, 0.44, ray.y);
-            Color color = air.horizon.mix(air.zenith, std::pow(lift, 0.64));
+            const double lift = smooth(0, 0.32, ray.y);
+            Color color = air.horizon.mix(air.zenith, std::pow(lift, 0.72));
             double cloudAlpha = 0;
             if (ray.y > 0) {
                 // Project the view through a raised cloud layer. The horizon
                 // compresses the shapes and haze softens edges in the distance.
                 const double altitude = 0.14 + ray.y;
-                const double a = ray.x / altitude * 2.2 + drift, b = ray.z / altitude * 2.2;
-                const double field = noise(a, b)*0.66 + noise(a*2.8 + 23, b*2.8)*0.23 + noise(a*7, b*7)*0.11;
+                const double a = ray.x / altitude * 1.75 + drift, b = ray.z / altitude * 2.6;
+                const double warp = noise(a*1.6+31, b*1.7) - 0.5;
+                const double field = noise(a+warp*0.55, b)*0.65 +
+                    noise(a*2.9 + 23, b*2.9)*0.24 + noise(a*8, b*7)*0.11;
                 const double threshold = 0.88 - air.cloud*0.74;
                 cloudAlpha = smooth(threshold-0.08, threshold+0.12, field) * smooth(0, 0.055, ray.y);
                 cloudAlpha = unit(cloudAlpha * (1-air.fog*0.40) * smooth(0, 0.14, air.cloud));
                 const double sunDot = std::max(0.0, sky.sun.dot(ray));
-                color = color.mix(air.sunlight, std::pow(sunDot, 20)*sunHaze);
+                const double warmHaze = air.twilight*0.29*std::exp(-std::pow((ray.y-0.022)/0.057, 2)) *
+                    (1-air.cloud*0.65)*(1-air.fog*0.45);
+                color = color.mix({0.94, 0.57, 0.43}, warmHaze);
+                color = color.mix(air.sunlight, std::pow(sunDot, 16)*sunHaze);
                 if (sky.sun.y > 0) color = color.mix({1, 0.95, 0.78},
                     smooth(std::cos(radians(0.53)), std::cos(radians(0.30)), sunDot)*(1-air.fog*0.85));
                 if (showMoon) {
                     const double along = ray.dot(sky.moon);
+                    const double halo = std::pow(std::max(0.0, along), 310) *
+                        sky.moonFraction*(1-air.daylight)*(1-air.fog)*0.18;
+                    color = color.mix({0.38, 0.48, 0.61}, halo);
                     if (along > std::cos(moonRadius)) {
                         const Vec inPlane = (ray - sky.moon*along) * (1/std::sin(moonRadius));
                         const Vec normal = inPlane - sky.moon*std::sqrt(unit(1-inPlane.dot(inPlane)));
@@ -105,14 +114,16 @@ NSBitmapImageRep* skyImage(const Sky& sky, const Atmosphere& air, double seconds
                         color = color.mix(disc, (0.045 + shade*0.93)*(1-air.fog*0.85));
                     }
                 }
-                const Color cloudColor = Color{0.093, 0.12, 0.18}.mix({0.78, 0.82, 0.84}, air.daylight)
-                    .mix({0.67, 0.34, 0.23}, air.twilight*0.15)
-                    .mix(air.horizon, (1-smooth(0, 0.28, ray.y))*0.45)
-                    .mix({0.42, 0.48, 0.56}, air.cloud*air.daylight*field*0.55);
+                const Color cloudColor = Color{0.11, 0.14, 0.20}.mix({0.91, 0.91, 0.88}, air.daylight)
+                    .mix({0.66, 0.39, 0.34}, air.twilight*0.37)
+                    .mix(air.horizon, (1-smooth(0, 0.27, ray.y))*0.42)
+                    .mix({0.41, 0.48, 0.56}, air.daylight*field*(0.27+air.cloud*0.45));
                 color = color.mix(cloudColor, cloudAlpha);
             }
             const size_t index = static_cast<size_t>(y*w + x);
             obscuration[index] = cloudAlpha;
+            const double dither = (seeded(static_cast<uint32_t>(index))-0.5)/255;
+            color = color + Color{dither, dither, dither};
             auto p = pixels + 4*index;
             p[0] = unit(color.r)*255; p[1] = unit(color.g)*255; p[2] = unit(color.b)*255; p[3] = 255;
         }
