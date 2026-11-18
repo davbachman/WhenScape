@@ -221,8 +221,8 @@ void makeDial(SCNNode* root, const Dial& dial, SCNMaterial* rim, SCNMaterial* st
         [root addChildNode:pier];
         post(root, at, at + Vec{0, -0.075, foot-at.z}, 0.054, metal);
     }
-    auto block = [SCNBox boxWithWidth:0.55 height:0.57 length:0.72 chamferRadius:0.06];
-    attach(root, block, stoneMaterial, {0, 0.31, -0.45});
+    auto block = [SCNBox boxWithWidth:0.38 height:0.53 length:0.46 chamferRadius:0.042];
+    attach(root, block, stoneMaterial, {0, 0.29, -0.68});
 
     Mesh spindle;
     constexpr uint32_t facets = 40;
@@ -322,7 +322,7 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
     SCNNode *root = _scene.rootNode;
     _camera = [SCNNode node];
     _camera.camera = [SCNCamera camera];
-    _camera.camera.fieldOfView = 43;
+    _camera.camera.fieldOfView = frameFOV(16.0/9);
     _camera.camera.projectionDirection = SCNCameraProjectionDirectionVertical;
     _camera.camera.zNear = 0.1;
     _camera.camera.zFar = 115;
@@ -411,7 +411,7 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
     _key.light.shadowColor = [NSColor colorWithSRGBRed:0.06 green:0.10 blue:0.15 alpha:0.55 * sunlight];
     const Vec lightRight = std::abs(sky.sun.y) > 0.9999 ? east : up.cross(sky.sun).normalized();
     basis(_key, lightRight, sky.sun.cross(lightRight), sky.sun, center + sky.sun*6);
-    _ambient.light.intensity = 145 + air.daylight*(485 + 180*air.cloud) + air.twilight*110;
+    _ambient.light.intensity = 225 + air.daylight*(405 + 180*air.cloud) + air.twilight*110;
     _ambient.light.color = Color{0.45, 0.58, 0.86}.mix({0.93, 0.95, 0.99}, air.daylight).native();
 
     const auto band = _dial.shadow(sky.sun, seconds);
@@ -433,7 +433,7 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
     _stoneTop.diffuse.contents = stone.mix(snow, cover).native();
     _rim.diffuse.contents = stone.mix(snow, cover * 0.62).native();
     _scene.fogColor = air.horizon.native();
-    _scene.fogStartDistance = (1-air.fog)*14;
+    _scene.fogStartDistance = (1-air.fog)*14 + 0.8;
     _scene.fogEndDistance = 105*std::pow(1-air.fog, 2.6) + 7;
     _scene.fogDensityExponent = 1.15;
 

@@ -45,7 +45,7 @@ int main(int argc, const char* argv[]) {
             stringByAppendingPathComponent:@"WhenScape.saver"];
         if (![path isAbsolutePath]) path = [NSFileManager.defaultManager.currentDirectoryPath
             stringByAppendingPathComponent:path];
-        NSRect frame = NSMakeRect(0, 0, preview ? 430 : 1152, preview ? 242 : 648);
+        NSRect frame = NSMakeRect(0, 0, preview ? 430 : 1024, preview ? 242 : 576);
         auto view = loadSaver(path, frame, preview);
         if (!view) return 1;
         if (smoke) {

@@ -14,7 +14,7 @@ The renderer casts rays from the spherical scale toward the topocentric Sun and 
 
 `scripts/build-saver.sh` produces an ad-hoc signed bundle. The macOS workflow loads its principal class in the preview host and exercises start, frame update, and stop against the fixtures without making network requests. The saved CI artifact is **WhenScape-saver-macOS**, containing `WhenScape-saver-macOS.zip`.
 
-The preview host uses the installed bundle entry point. Run it without arguments for live conditions. Use `--fixture NAME` to freeze the date and weather while the flag and precipitation continue to animate. Add `--system-size` to use the small preview render settings.
+The preview host uses the installed bundle entry point. Run it without arguments for live conditions. Use `--fixture NAME` to freeze the date and weather while the flag and precipitation continue to animate. Add `--system-size` to use the small preview render settings. Use `--capture file.png` to save the 3D scene frame. The runner publishes selected frames as **WhenScape-saver-previews**.
 
 | Fixtures | What to inspect |
 | --- | --- |

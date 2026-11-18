@@ -7,13 +7,13 @@
 #include "Weather.hpp"
 
 namespace sundial {
-inline const Vec cameraPosition{4.0, 2.52, 4.4};
-inline const Vec cameraTarget{0, 1.40, -0.12};
+inline const Vec cameraPosition{2.68, 2.63, 5.95};
+inline const Vec cameraTarget{0, 1.43, -0.05};
 inline const Vec cameraForward = (cameraTarget - cameraPosition).normalized();
 inline const Vec cameraRight = cameraForward.cross(up).normalized();
 inline const Vec cameraUp = cameraRight.cross(cameraForward);
 inline double frameFOV(double aspect) {
-    return degrees(2 * std::atan(std::tan(radians(43.0/2)) * std::max(1.0, 1.26/aspect)));
+    return degrees(2 * std::atan(std::tan(radians(45.0/2)) * std::max(1.0, 1.26/aspect)));
 }
 
 inline SCNVector3 sceneVector(Vec v) { return SCNVector3Make(v.x, v.y, v.z); }
