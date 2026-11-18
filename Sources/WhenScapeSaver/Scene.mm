@@ -187,13 +187,13 @@ void makeDial(SCNNode* root, const Dial& dial, SCNMaterial* rim, SCNMaterial* st
     auto outline = material({0.38, 0.34, 0.27});
     meshNode(root, scaleSurface(-0.220, -0.216, 0.0018, 0.0018), outline).castsShadow = NO;
     meshNode(root, scaleSurface(0.216, 0.220, 0.0018, 0.0018), outline).castsShadow = NO;
-    meshNode(root, scaleSurface(-0.002, 0.002, 0.0018, 0.0018), outline).castsShadow = NO;
+    meshNode(root, scaleSurface(-0.003, 0.003, 0.0018, 0.0018), outline).castsShadow = NO;
 
     Mesh ticks;
     for (int m = firstMinute; m <= lastMinute; m += 5) {
         const bool hour = m % 60 == 0, quarter = m % 15 == 0, half = m % 30 == 0;
         const double tickLength = hour ? 0.124 : half ? 0.092 : quarter ? 0.070 : 0.046;
-        faceMark(ticks, markAngle(m), hour ? 0.0050 : quarter ? 0.0027 : 0.0018, 0, tickLength);
+        faceMark(ticks, markAngle(m), hour ? 0.0075 : quarter ? 0.0048 : 0.0031, 0, tickLength);
     }
     meshNode(root, ticks, ink).castsShadow = NO;
     NSArray<NSString*> *hours = @[@"VI", @"VII", @"VIII", @"IX", @"X", @"XI", @"XII",
@@ -221,8 +221,8 @@ void makeDial(SCNNode* root, const Dial& dial, SCNMaterial* rim, SCNMaterial* st
         [root addChildNode:pier];
         post(root, at, at + Vec{0, -0.075, foot-at.z}, 0.054, metal);
     }
-    auto block = [SCNBox boxWithWidth:0.38 height:0.53 length:0.46 chamferRadius:0.042];
-    attach(root, block, stoneMaterial, {0, 0.29, -0.68});
+    auto block = [SCNBox boxWithWidth:0.34 height:0.45 length:0.38 chamferRadius:0.038];
+    attach(root, block, stoneMaterial, {0, 0.25, -0.64});
 
     Mesh spindle;
     constexpr uint32_t facets = 40;

@@ -10,7 +10,7 @@ The renderer casts rays from the spherical scale toward the topocentric Sun and 
 
 ## Verification
 
-`scripts/test-saver.sh` samples morning, noon and afternoon across 2024, 2026 and 2030, covering seasonal extrema, dates around both DST transitions and both shadow edges. It recovers the reading from the geometry used by the renderer and checks the ray immediately inside and outside the selected edge. It also checks the polar orientation, lunar visibility and illumination, sunrise around DST, weather intensities, wind direction and cache expiry.
+`scripts/test-saver.sh` samples morning, noon and afternoon across 2024, 2026 and 2030, covering seasonal extrema, dates around both DST transitions and both shadow edges. Across 2,456 illuminated samples, the maximum error was 4.60 minutes PST. The test recovers the reading from the geometry used by the renderer and checks the ray immediately inside and outside the selected edge. Native runner frames also show the selected edge at the expected graduation in the morning, both noon fixtures and the afternoon. It also checks the polar orientation, lunar visibility and illumination, sunrise around DST, weather intensities, wind direction and cache expiry.
 
 `scripts/build-saver.sh` produces an ad-hoc signed bundle. The macOS workflow loads its principal class in the preview host and exercises start, frame update, and stop against the fixtures without making network requests. The saved CI artifact is **WhenScape-saver-macOS**, containing `WhenScape-saver-macOS.zip`.
 
