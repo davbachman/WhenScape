@@ -2,6 +2,8 @@
 
 #import "WhenScapeSaverView.h"
 
+#include <cstring>
+
 namespace {
 WhenScapeSaverView* loadSaver(NSString* path, NSRect frame, BOOL preview) {
     auto bundle = [NSBundle bundleWithPath:path];

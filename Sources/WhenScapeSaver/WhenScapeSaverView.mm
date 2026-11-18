@@ -80,7 +80,7 @@ std::optional<Fixture> fixtureNamed(NSString* name) {
         @"rain": @"2024-03-20T19:00:00Z", @"snow": @"2024-12-21T20:00:00Z",
         @"snow-cover": @"2024-12-21T20:00:00Z", @"calm": @"2024-11-03T20:00:00Z",
         @"twilight": @"2024-06-20T03:32:00Z", @"night": @"2024-07-01T06:00:00Z",
-        @"moon": @"2024-06-11T05:15:00Z", @"cloudy-night": @"2024-07-01T06:00:00Z",
+        @"moon": @"2024-06-10T05:45:00Z", @"cloudy-night": @"2024-07-01T06:00:00Z",
         @"offline": @"2024-11-03T20:00:00Z", @"stale": @"2024-11-03T20:00:00Z"
     };
     if (!dates[name]) return std::nullopt;
@@ -295,7 +295,8 @@ NSString* windLabel(const Weather& weather) {
     [self fetchWeather:uptime];
     [SCNTransaction begin];
     [SCNTransaction setAnimationDuration:0];
-    if (uptime >= _nextScene) {
+    const BOOL refreshScene = uptime >= _nextScene;
+    if (refreshScene) {
         const auto sample = _fixture ? _fixture->weather : _sample;
         const bool available = sample && sample->fresh(now);
         const auto weather = available ? *sample : Weather{};
@@ -305,8 +306,7 @@ NSString* windLabel(const Weather& weather) {
             _caption.event = _sunrise ? [@"Sunrise  " stringByAppendingString:
                 [_timeFormat stringFromDate:[NSDate dateWithTimeIntervalSince1970:*_sunrise]]] : @"";
         } else if (_scene.hasReadableShadow) {
-            const double edge = static_cast<int>(_scene.readingEdge);
-            _caption.event = edge == static_cast<int>(ReadingEdge::earlier)
+            _caption.event = _scene.readingEdge == ReadingEdge::earlier
                 ? @"Read earlier edge  ·  PST" : @"Read later edge  ·  PST";
         } else {
             _caption.event = @"";
@@ -315,8 +315,8 @@ NSString* windLabel(const Weather& weather) {
         _caption.needsDisplay = YES;
         _nextScene = uptime + (weather.cloudiness() > 0.05 && !_preview ? 5 : 12);
     }
-    [_scene updateMotion:uptime - _started];
+    const BOOL motionChanged = [_scene updateMotion:uptime - _started];
     [SCNTransaction commit];
-    _view.needsDisplay = YES;
+    if (refreshScene || motionChanged) _view.needsDisplay = YES;
 }
 @end

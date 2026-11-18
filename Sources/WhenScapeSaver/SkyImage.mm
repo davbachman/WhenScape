@@ -58,7 +58,7 @@ Atmosphere atmosphere(const Sky& sky, const Weather& weather) {
 NSBitmapImageRep* skyImage(const Sky& sky, const Atmosphere& air, double seconds, CGSize size, double aspect) {
     const int w = static_cast<int>(size.width), h = static_cast<int>(size.height);
     auto bitmap = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:nullptr pixelsWide:w pixelsHigh:h
-        bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES colorSpaceName:NSDeviceRGBColorSpace
+        bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace
         bitmapFormat:0 bytesPerRow:w*4 bitsPerPixel:32];
     auto pixels = bitmap.bitmapData;
     const double spread = std::tan(radians(frameFOV(aspect) / 2));

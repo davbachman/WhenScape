@@ -133,7 +133,7 @@ Mesh scaleSurface(double q1, double q2, double inset1, double inset2, bool outsi
 Mesh annulus(double inner, double outer, double height) {
     Mesh mesh;
     for (int i = 0; i <= 120; ++i) {
-        const double a = 2*pi*i/120;
+        const double a = 2*sundial::pi*i/120;
         const Vec direction{std::sin(a), 0, std::cos(a)};
         mesh.point(direction*inner + up*height, up);
         mesh.point(direction*outer + up*height, up);
@@ -227,7 +227,7 @@ void makeDial(SCNNode* root, const Dial& dial, SCNMaterial* rim, SCNMaterial* st
     uint32_t i = 0;
     for (auto ring : dial.spindle()) {
         for (uint32_t j = 0; j <= facets; ++j) {
-            const double a = 2*pi*j/facets;
+            const double a = 2*sundial::pi*j/facets;
             const auto radial = east*std::cos(a) + trough*std::sin(a);
             spindle.point(center + pole*ring.axial + radial*ring.radius, radial);
             if (i && j) spindle.quad(i+j-facets-2, i+j-facets-1, i+j, i+j-1);
@@ -259,7 +259,7 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
     meshNode(root, marks, engrave).castsShadow = NO;
     NSArray<NSString*> *cardinals = @[@"N", @"E", @"S", @"W"];
     for (NSUInteger i = 0; i < cardinals.count; ++i) {
-        const double a = i*pi/2;
+        const double a = i*sundial::pi/2;
         const Vec at = (east*std::sin(a) + north*std::cos(a))*1.63 + up*0.031;
         lettering(root, cardinals[i], 0.145, at, east, north, engrave, YES);
     }
@@ -274,7 +274,7 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
     Dial _dial;
     Weather _weather;
     double _daylight, _rainfall, _flakes;
-    bool _night, _readable;
+    bool _night, _readable, _motionInitialized;
     BOOL _preview;
     ReadingEdge _readingEdge;
 }
@@ -315,7 +315,7 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
     auto ink = material(inlay);
     auto metal = material(bronze);
     auto plane = attach(root, [SCNPlane planeWithWidth:220 height:220], _ground, {0, -0.046, 0});
-    plane.eulerAngles = SCNVector3Make(-pi/2, 0, 0);
+    plane.eulerAngles = SCNVector3Make(-sundial::pi/2, 0, 0);
     plane.castsShadow = NO;
     makePad(root, _pad, ink);
     makeDial(root, _dial, _rim, stoneMaterial, _stoneTop, metal, ink);
@@ -359,6 +359,7 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
 - (void)updateAt:(double)seconds weather:(const Weather&)weather size:(CGSize)size preview:(BOOL)preview {
     _weather = weather;
     _preview = preview;
+    _motionInitialized = false;
     _rainfall = weather.rainfall();
     _flakes = weather.flakes();
     const auto sky = skyAt(seconds);
@@ -409,10 +410,12 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
     }
 }
 
-- (void)updateMotion:(double)t {
+- (BOOL)updateMotion:(double)t {
     const auto wind = _weather.wind();
     const double speed = wind ? wind->speed : 0;
     const double extension = unit((speed - 0.25)/8.0);
+    if (_motionInitialized && extension == 0 && _rainfall == 0 && _flakes == 0) return NO;
+    _motionInitialized = true;
     Vec direction = speed > 0.25 ? wind->downwind : east;
     const auto across = direction.cross(up);
     Mesh flag;
@@ -474,5 +477,6 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
         ink.transparency = flakes ? 0.53+0.32*_daylight : 0.28+0.30*_daylight;
         node.geometry = precipitation.geometry(ink, !flakes);
     }
+    return YES;
 }
 @end

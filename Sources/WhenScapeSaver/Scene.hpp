@@ -39,7 +39,7 @@ NSBitmapImageRep* skyImage(const Sky& sky, const Atmosphere& air, double seconds
 @property(nonatomic, readonly) SCNScene *scene;
 @property(nonatomic, readonly) SCNNode *camera;
 - (void)updateAt:(double)seconds weather:(const sundial::Weather&)weather size:(CGSize)size preview:(BOOL)preview;
-- (void)updateMotion:(double)elapsed;
+- (BOOL)updateMotion:(double)elapsed;
 - (BOOL)hasReadableShadow;
 - (sundial::ReadingEdge)readingEdge;
 - (BOOL)isNight;
