@@ -8,6 +8,8 @@ The wire points true north at an elevation of 34.100°. Hours advance by 15° on
 
 The renderer casts rays from the spherical scale toward the topocentric Sun and solves for intersections with the wire and spindle frusta. Those intersections define the rendered shadow band. The night caption formats the next standard astronomical sunrise in `America/Los_Angeles`. Stars use a procedural field that rotates at the local sidereal rate. The Moon uses its computed topocentric position and phase with an enlarged disc for visibility.
 
+Two modeled foothill ridges frame the dry meadow and gravel path. The skyline stays low at the western edge of the view. The grass bends with the reported wind, fog softens the ridges, and the meadow and path lighten with snow cover.
+
 ## Verification
 
 `scripts/test-saver.sh` samples morning, noon and afternoon across 2024, 2026 and 2030, covering seasonal extrema, dates around both DST transitions and both shadow edges. Across 2,456 illuminated samples, the maximum error was 4.60 minutes PST. The test recovers the reading from the geometry used by the renderer and checks the ray immediately inside and outside the selected edge. Native runner frames also show the selected edge at the expected graduation in the morning, both noon fixtures and the afternoon. It also checks the polar orientation, lunar visibility and illumination, sunrise around DST, weather intensities, wind direction and cache expiry.

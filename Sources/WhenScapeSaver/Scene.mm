@@ -431,6 +431,7 @@ void makePad(SCNNode* root, SCNMaterial* top, SCNMaterial* engrave) {
     _scene.fogStartDistance = (1-air.fog)*7.8 + 0.8;
     _scene.fogEndDistance = 91*std::pow(1-air.fog, 2.6) + 7;
     _scene.fogDensityExponent = 1.45;
+    [_landscape updateFog:air.fog];
 
     if (size.width > 0 && size.height > 0) {
         const auto aspect = size.width/size.height;

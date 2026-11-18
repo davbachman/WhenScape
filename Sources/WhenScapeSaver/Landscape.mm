@@ -8,7 +8,7 @@ using namespace sundial;
 namespace {
 
 const Vec terrainForward = Vec{cameraForward.x, 0, cameraForward.z}.normalized();
-constexpr Color straw{0.63, 0.54, 0.32};
+constexpr Color straw{0.61, 0.53, 0.35};
 constexpr Color grassShade{0.48, 0.44, 0.28};
 constexpr Color sage{0.32, 0.39, 0.29};
 constexpr Color sageTip{0.46, 0.49, 0.35};
@@ -89,7 +89,7 @@ Mesh gravelPath() {
             const double u = static_cast<double>(j)/across;
             mesh.texturedPoint(point + side*(width*(2*u-1)), up, u, distance/2.4);
             const uint32_t k = i*(across+1)+j;
-            if (i && j) mesh.quad(k-across-2,k-1,k,k-across-1);
+            if (i && j) mesh.quad(k-across-2,k-across-1,k,k-1);
         }
     }
     return mesh;
@@ -122,7 +122,7 @@ std::vector<Blade> grassBlades() {
     auto next = [&] { return randomFraction(++seed); };
     for (const auto& patch : grassPatches) {
         for (int i = 0; i < patch.count; ++i) {
-            const double angle = 2*sundial::pi*next(), distance = std::sqrt(next())*patch.spread;
+            const double angle = 2*sundial::pi*next(), distance = std::pow(next(),0.69)*patch.spread;
             const auto radial = cameraRight*std::cos(angle) + terrainForward*std::sin(angle);
             const auto root = meadowPoint(patch.side,patch.depth) + radial*distance;
             const double height = patch.height*(0.45+0.73*next());
@@ -192,7 +192,7 @@ void makeScrub(SCNNode* root, SCNMaterial* green, SCNMaterial* tips) {
 
 @implementation Landscape {
     SCNMaterial *_gravel, *_nearRidge, *_farRidge, *_dryGrass, *_shadedGrass, *_scrub, *_scrubTip;
-    SCNNode *_dryStems, *_shadedStems;
+    SCNNode *_nearHills, *_farHills, *_dryStems, *_shadedStems;
     std::vector<Blade> _blades;
     double _lastGrassUpdate;
     bool _grassInitialized, _wasWindy;
@@ -203,8 +203,10 @@ void makeScrub(SCNNode* root, SCNMaterial* green, SCNMaterial* tips) {
     if (!self) return nil;
     _nearRidge = material({0.35, 0.40, 0.38});
     _farRidge = material({0.39, 0.45, 0.48});
-    meshNode(root,ridge(false),_nearRidge).castsShadow = NO;
-    meshNode(root,ridge(true),_farRidge).castsShadow = NO;
+    _nearRidge.multiply.contents = Color{0.90,0.95,1}.native();
+    _nearHills = meshNode(root,ridge(false),_nearRidge);
+    _farHills = meshNode(root,ridge(true),_farRidge);
+    _nearHills.castsShadow = _farHills.castsShadow = NO;
 
     _gravel = material({0.65, 0.59, 0.47});
     _gravel.blendMode = SCNBlendModeAlpha;
@@ -229,12 +231,21 @@ void makeScrub(SCNNode* root, SCNMaterial* green, SCNMaterial* tips) {
     const Color frost{0.86, 0.90, 0.93};
     applyTexture(_gravel,surfaceTexture(Surface::gravel,cover*0.83));
     _gravel.diffuse.wrapS = SCNWrapModeClamp;
-    _nearRidge.diffuse.contents = Color{0.35,0.40,0.38}.mix(frost,cover*0.46).native();
+    applyTexture(_nearRidge,surfaceTexture(Surface::earth,cover*0.82));
+    _nearRidge.diffuse.contentsTransform = SCNMatrix4MakeScale(6,1.5,1);
     _farRidge.diffuse.contents = Color{0.39,0.45,0.48}.mix(frost,cover*0.60).native();
     _dryGrass.diffuse.contents = straw.mix(frost,cover*0.62).native();
     _shadedGrass.diffuse.contents = grassShade.mix(frost,cover*0.29).native();
     _scrub.diffuse.contents = sage.mix(frost,cover*0.24).native();
     _scrubTip.diffuse.contents = sageTip.mix(frost,cover*0.73).native();
+}
+
+- (void)updateFog:(double)fog {
+    // Fog density already softens the geometry with distance. Fade the
+    // skyline itself as visibility becomes too low to make out the ridges.
+    const double near = unit((0.88-fog)/0.52), far = unit((0.71-fog)/0.53);
+    _nearHills.opacity = near*near*(3-2*near);
+    _farHills.opacity = far*far*(3-2*far);
 }
 
 - (void)updateGrassAt:(double)elapsed windSpeed:(double)speed downwind:(Vec)downwind preview:(BOOL)preview {
