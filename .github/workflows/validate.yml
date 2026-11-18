@@ -9,10 +9,16 @@ jobs:
         run: scripts/test-saver.sh
       - name: Build the screensaver bundle
         run: scripts/build-saver.sh
-      - name: Smoke-test the installed bundle entry point
-        run: build/WhenScapePreview --smoke --system-size
       - name: Package the screensaver
         run: ditto -c -k --sequesterRsrc --keepParent build/WhenScape.saver build/WhenScape-saver-macOS.zip
+      - name: Verify and smoke-test the packaged bundle
+        run: |
+          extracted="$(mktemp -d)"
+          trap 'rm -rf "$extracted"' EXIT
+          ditto -x -k build/WhenScape-saver-macOS.zip "$extracted"
+          codesign --verify --strict "$extracted/WhenScape.saver"
+          cp build/WhenScapePreview "$extracted/WhenScapePreview"
+          "$extracted/WhenScapePreview" --smoke --system-size
       - uses: actions/upload-artifact@v6
         with:
           name: WhenScape-saver-macOS
