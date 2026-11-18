@@ -246,7 +246,7 @@ async function loadGeography(token) {
   // 2275207), a textured mesh of real buildings, trees and ground. The ion
   // account must have that asset added; otherwise fall back to World Terrain
   // with OSM building boxes below.
-  let mesh;
+  let mesh, meshProblem;
   try {
     // Requested directly rather than through Cesium's helper, which remembers a
     // failed request and would keep failing after the token is corrected.
@@ -254,8 +254,9 @@ async function loadGeography(token) {
       maximumScreenSpaceError: detailError(), showCreditsOnScreen: true, enableCollision: true,
       // Capture-time shadows are baked into the textures; casting more would double them.
       shadows: C.ShadowMode.DISABLED });
-  } catch {
+  } catch (error) {
     mesh = undefined;
+    meshProblem = describeIonError(error);
   }
   if (generation !== geometryGeneration) { mesh?.destroy(); return; }
   if (mesh) {
@@ -310,19 +311,30 @@ async function loadGeography(token) {
     buildingsResult.value.destroy();
   }
   if (terrainAvailable && buildings) {
-    geometryMessage = 'OSM buildings · heights and coverage vary';
+    geometryMessage = `OSM buildings · photorealistic mesh unavailable: ${meshProblem}`;
     $('setup-message').hidden = true;
   } else if (terrainAvailable) {
     geometryMessage = 'Terrain only · buildings unavailable';
     showNotice('Building data unavailable', 'Terrain is available, but buildings could not load. Check your Cesium token’s asset access and network connection.');
   } else {
     geometryMessage = 'Sky preview · geographic data unavailable';
-    showNotice('Geographic data unavailable', 'Check your Cesium ion token and network connection. The calculated sky remains available; terrain and buildings have not loaded.');
+    const terrainProblem = describeIonError(terrainResult.reason);
+    showNotice('Geographic data unavailable', `Photorealistic mesh: ${meshProblem}. Terrain: ${terrainProblem}. The calculated sky remains available; terrain and buildings have not loaded.`);
   }
   $('geometry-status').textContent = geometryMessage;
   await placeObserver();
   viewer.scene.requestRender();
   postStatus(true);
+}
+
+// A short reason for a failed Cesium ion request. Only the status code is
+// used, so no token or request address can reach the screen.
+function describeIonError(error) {
+  const status = error?.statusCode;
+  if (status === 401) return 'Cesium ion rejected the token (401)';
+  if (status === 403 || status === 404) return `this token cannot read the asset (${status})`;
+  if (status) return `request failed (${status})`;
+  return 'no response; check the network connection';
 }
 
 function detailError() { return state?.detail === 'high' ? 8 : state?.detail === 'low' ? 32 : 16; }
@@ -579,10 +591,10 @@ function update(next) {
   }
   if (activeToken !== state.ionToken) {
     activeToken = state.ionToken;
-    loadGeography(activeToken).catch(() => {
+    loadGeography(activeToken).catch(error => {
       geometryMessage = 'Geographic data unavailable';
       $('geometry-status').textContent = geometryMessage;
-      showNotice('Geographic data unavailable', 'Check the connection and Cesium token in Settings.');
+      showNotice('Geographic data unavailable', `The scene could not be prepared: ${String(error?.message ?? error).slice(0, 160)}`);
       postStatus(true);
     });
   } else if (previous?.latitude !== state.latitude || previous?.longitude !== state.longitude) {
