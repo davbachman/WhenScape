@@ -87,7 +87,7 @@ Mesh gravelPath() {
             unit((pathLength-distance+0.10)/3.2);
         for (uint32_t j = 0; j <= across; ++j) {
             const double u = static_cast<double>(j)/across;
-            mesh.texturedPoint(point + side*(width*(2*u-1)), up, u, distance/2.4);
+            mesh.texturedPoint(point + side*(width*(2*u-1)), up, u, distance/pathLength);
             const uint32_t k = i*(across+1)+j;
             if (i && j) mesh.quad(k-across-2,k-across-1,k,k-1);
         }
@@ -230,7 +230,7 @@ void makeScrub(SCNNode* root, SCNMaterial* green, SCNMaterial* tips) {
 - (void)updateSnowCover:(double)cover {
     const Color frost{0.86, 0.90, 0.93};
     applyTexture(_gravel,surfaceTexture(Surface::gravel,cover*0.83));
-    _gravel.diffuse.wrapS = SCNWrapModeClamp;
+    _gravel.diffuse.wrapS = _gravel.diffuse.wrapT = SCNWrapModeClamp;
     applyTexture(_nearRidge,surfaceTexture(Surface::earth,cover*0.82));
     _nearRidge.diffuse.contentsTransform = SCNMatrix4MakeScale(6,1.5,1);
     _farRidge.diffuse.contents = Color{0.39,0.45,0.48}.mix(frost,cover*0.60).native();

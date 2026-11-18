@@ -93,8 +93,9 @@ void engraveScale(CGContextRef context, int w, int h) {
 
 NSImage* surfaceTexture(Surface surface, double snowCover) {
     const bool scale = surface == Surface::terrazzo;
-    constexpr int mapHeight = 384;
-    const int w = scale ? 3072 : mapHeight, h = mapHeight;
+    const bool gravel = surface == Surface::gravel;
+    const int w = scale ? 3072 : gravel ? 192 : 384;
+    const int h = gravel ? 1536 : 384;
     const auto finish = finishFor(surface);
     const auto seed = static_cast<unsigned>(surface) + 7;
     const Color base = finish.base.mix({0.89, 0.93, 0.96}, snowCover);
@@ -105,21 +106,22 @@ NSImage* surfaceTexture(Surface surface, double snowCover) {
         const double v = (y+0.5)/h;
         for (int x = 0; x < w; ++x) {
             const double u = (x+0.5)/w;
-            const double coarse = mottling(u,v,scale ? 48 : 8,8,seed)-0.5;
-            const double medium = mottling(u,v,scale ? 212 : 48,48,seed+11)-0.5;
+            const double coarse = mottling(u,v,scale ? 48 : 8,gravel ? 113 : 8,seed)-0.5;
+            const double medium = mottling(u,v,scale ? 212 : 48,gravel ? 490 : 48,seed+11)-0.5;
             const double fine = grain(x,y,seed+29)-0.5;
-            const double aggregate = unit(-0.70 + 2.9*mottling(u,v,scale ? 560 : 125,96,seed+53));
+            const double aggregate = unit(-0.70 + 2.9*mottling(u,v,scale ? 560 : 125,gravel ? 710 : 96,seed+53));
             const double variance = (coarse*finish.variation + medium*finish.mottlingStrength +
                 fine*finish.grainStrength) *
                 (1-snowCover*0.61);
             const auto color = base.mix(finish.aggregate, aggregate*finish.aggregateStrength*(1-snowCover*0.93))
                 + Color{variance,variance,variance};
             double alpha = 1;
-            if (surface == Surface::gravel) {
-                // Feather the edges where the chips scatter into the soil.
-                const double edge = 0.487 - 0.065*mottling(u,v,8,16,seed+1);
+            if (gravel) {
+                // Feather the gravel into the soil along both edges and at the far bend.
+                const double edge = 0.487 - 0.065*mottling(u,v,8,112,seed+1);
                 const double feather = unit((edge - std::abs(u-0.5) + fine*0.048)/0.084);
-                alpha = feather*feather*(3-2*feather);
+                const double distanceFade = unit((0.991-v)/0.17);
+                alpha = feather*feather*(3-2*feather) * distanceFade*distanceFade*(3-2*distanceFade);
             }
             auto p = pixels+4*(y*w+x);
             p[0]=unit(color.r)*alpha*255; p[1]=unit(color.g)*alpha*255;
