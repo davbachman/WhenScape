@@ -13,7 +13,7 @@
   <canvas id="weather-effects" aria-hidden="true"></canvas>
   <div class="top-hud">
     <div class="scene-caption">
-      <div class="eyebrow"><span class="live-dot"></span> GROUND VIEW</div>
+      <div class="eyebrow"><span class="live-dot"></span> <span id="view-kind">GROUND VIEW</span></div>
       <h1 id="place-name">WhenScape</h1>
       <div id="scene-coordinate" class="secondary">Choose a place on the map</div>
     </div>
@@ -47,7 +47,7 @@
       <div><span id="wind-speed"></span><small id="wind-direction"></small></div>
     </div>
   </div>
-  <div class="footnote"><span id="geometry-status">Preparing scene</span><span class="rotate-hint">Drag to look · ↑ ↓ ← →</span></div>
+  <div class="footnote"><span id="geometry-status">Preparing scene</span><span class="rotate-hint" id="rotate-hint">Drag to look · ↑ ↓ ← →</span></div>
   <script>window.CESIUM_BASE_URL = './cesium/';</script>
   <script src="./cesium/Cesium.js"></script>
   <script src="./app.js"></script>

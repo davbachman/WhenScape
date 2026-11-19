@@ -9,6 +9,10 @@ let viewer, buildings, terrain, state, astronomy, snowShader, tintShader, cloudS
 // True while `buildings` is the photorealistic mesh, which includes its own ground.
 let photoreal = false;
 let heading = 0, pitch = 0.025, eyeHeight = 1.7;
+// Aerial view used with the photorealistic mesh, which is captured from the
+// air and only holds up from above: the camera orbits the pin, looking down.
+const droneLimits = { minPitch: -80 * Math.PI / 180, maxPitch: -6 * Math.PI / 180, minRange: 60, maxRange: 2500 };
+let dronePitch = -20 * Math.PI / 180, droneRange = 175;
 let geometryGeneration = 0, positionGeneration = 0, weatherGeneration = 0;
 let activeToken, terrainAvailable = false, geometryMessage = 'Geographic data unavailable';
 let weather = { kind: 'missing', label: 'Weather unavailable', detail: 'Choose a place and time.', renderPrecipitation: false };
@@ -143,7 +147,10 @@ function installRotation() {
   canvas.addEventListener('pointermove', e => {
     if (!pointer || pointer.id !== e.pointerId) return;
     heading -= (e.clientX - pointer.x) * 0.003;
-    pitch = clamp(pitch + (e.clientY - pointer.y) * 0.003, -Math.PI / 2 + 0.02, Math.PI / 2 - 0.02);
+    const tilt = (e.clientY - pointer.y) * 0.003;
+    // In the aerial view, dragging down lifts the camera toward a top-down view.
+    if (photoreal) dronePitch = clamp(dronePitch - tilt, droneLimits.minPitch, droneLimits.maxPitch);
+    else pitch = clamp(pitch + tilt, -Math.PI / 2 + 0.02, Math.PI / 2 - 0.02);
     pointer.x = e.clientX; pointer.y = e.clientY;
     setCamera();
   });
@@ -152,11 +159,20 @@ function installRotation() {
   canvas.addEventListener('pointercancel', end);
   canvas.addEventListener('lostpointercapture', end);
   canvas.addEventListener('contextmenu', e => e.preventDefault());
-  canvas.addEventListener('wheel', e => e.preventDefault(), { passive: false });
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    if (!photoreal) return;
+    droneRange = clamp(droneRange * Math.exp(clamp(e.deltaY, -200, 200) * 0.002), droneLimits.minRange, droneLimits.maxRange);
+    setCamera();
+  }, { passive: false });
   $('scene').addEventListener('keydown', e => {
     const amount = e.shiftKey ? 0.12 : 0.035;
     if (e.key === 'ArrowLeft') heading -= amount;
     else if (e.key === 'ArrowRight') heading += amount;
+    else if (photoreal && e.key === 'ArrowUp') dronePitch = Math.max(dronePitch - amount, droneLimits.minPitch);
+    else if (photoreal && e.key === 'ArrowDown') dronePitch = Math.min(dronePitch + amount, droneLimits.maxPitch);
+    else if (photoreal && (e.key === '+' || e.key === '=')) droneRange = Math.max(droneRange / 1.15, droneLimits.minRange);
+    else if (photoreal && (e.key === '-' || e.key === '_')) droneRange = Math.min(droneRange * 1.15, droneLimits.maxRange);
     else if (e.key === 'ArrowUp') pitch = Math.min(pitch + amount, Math.PI / 2 - 0.02);
     else if (e.key === 'ArrowDown') pitch = Math.max(pitch - amount, -Math.PI / 2 + 0.02);
     else return;
@@ -166,12 +182,27 @@ function installRotation() {
 
 function normalizeHeading() { return (((heading * 180 / Math.PI) % 360) + 360) % 360; }
 
+function updateViewLabels() {
+  $('view-kind').textContent = photoreal ? 'AERIAL VIEW' : 'GROUND VIEW';
+  $('rotate-hint').textContent = photoreal ? 'Drag to orbit · scroll to zoom' : 'Drag to look · ↑ ↓ ← →';
+  $('scene').setAttribute('aria-label', photoreal
+    ? 'Aerial view of the selected place. Drag or use arrow keys to orbit and tilt. Scroll or use plus and minus to zoom.'
+    : 'Ground-level scene. Drag to look around. Arrow keys rotate the view.');
+}
+
 function setCamera() {
   if (!state || !viewer) return;
-  viewer.camera.setView({
-    destination: C.Cartesian3.fromDegrees(state.longitude, state.latitude, eyeHeight),
-    orientation: { heading, pitch, roll: 0 },
-  });
+  if (photoreal) {
+    // Orbit the pin at ground level; `heading` stays the direction the camera faces.
+    const pin = C.Cartesian3.fromDegrees(state.longitude, state.latitude, eyeHeight - 1.7);
+    viewer.camera.lookAt(pin, new C.HeadingPitchRange(heading, dronePitch, droneRange));
+    viewer.camera.lookAtTransform(C.Matrix4.IDENTITY);
+  } else {
+    viewer.camera.setView({
+      destination: C.Cartesian3.fromDegrees(state.longitude, state.latitude, eyeHeight),
+      orientation: { heading, pitch, roll: 0 },
+    });
+  }
   const degrees = normalizeHeading();
   $('heading').textContent = `${compassName(degrees)} · ${Math.round(degrees)}°`;
   $('compass-needle').style.transform = `rotate(${-degrees}deg)`;
@@ -183,7 +214,9 @@ function setCamera() {
 async function placeObserver() {
   const generation = ++positionGeneration;
   const { latitude, longitude } = state;
-  eyeHeight = 1.7;
+  // Keep the last ground height in the aerial view so moving the pin does not
+  // drop the camera below the mesh while the new height is sampled.
+  if (!photoreal) eyeHeight = 1.7;
   setCamera();
   if (photoreal) {
     try {
@@ -228,6 +261,7 @@ async function loadGeography(token) {
   if (snowShader) { snowShader.destroy(); snowShader = undefined; }
   if (tintShader) { tintShader.destroy(); tintShader = undefined; }
   photoreal = false;
+  updateViewLabels();
   viewer.scene.globe.show = true;
   viewer.terrainProvider = new C.EllipsoidTerrainProvider();
   if (!token) {
@@ -252,6 +286,8 @@ async function loadGeography(token) {
     // failed request and would keep failing after the token is corrected.
     mesh = await C.Cesium3DTileset.fromUrl(await C.IonResource.fromAssetId(2275207), {
       maximumScreenSpaceError: detailError(), showCreditsOnScreen: true, enableCollision: true,
+      // The aerial view sees to the horizon; load distant tiles more coarsely.
+      dynamicScreenSpaceError: true,
       // Capture-time shadows are baked into the textures; casting more would double them.
       shadows: C.ShadowMode.DISABLED });
   } catch (error) {
@@ -261,6 +297,7 @@ async function loadGeography(token) {
   if (generation !== geometryGeneration) { mesh?.destroy(); return; }
   if (mesh) {
     photoreal = true;
+    updateViewLabels();
     // The mesh replaces the globe surface; drawing both makes them fight.
     viewer.scene.globe.show = false;
     buildings = viewer.scene.primitives.add(mesh);
@@ -272,8 +309,9 @@ async function loadGeography(token) {
     updateBuildingStyle();
     geometryMessage = 'Photorealistic 3D mesh · captured in daylight, relit approximately';
     $('geometry-status').textContent = geometryMessage;
-    $('setup-message').hidden = true;
     await placeObserver();
+    if (generation !== geometryGeneration) return;
+    if (!geometryMessage.startsWith('Ground elevation')) $('setup-message').hidden = true;
     viewer.scene.requestRender();
     postStatus(true);
     return;
@@ -543,7 +581,7 @@ function drawEffects(delta) {
       const depth = 0.3 + hash(i + 200) * 0.7;
       const speed = isSnow ? 25 + depth * 55 : 350 + depth * 550;
       const x = mod(seed * width + weatherClock * drift * 9 * depth - heading * width * depth, width + 40) - 20;
-      const y = mod(hash(i + 400) * height + weatherClock * speed + pitch * height * depth, height + 45) - 20;
+      const y = mod(hash(i + 400) * height + weatherClock * speed + (photoreal ? dronePitch : pitch) * height * depth, height + 45) - 20;
       ctx.globalAlpha = (0.25 + depth * 0.6) * (0.35 + daylight * 0.65);
       if (isSnow) {
         ctx.fillStyle = '#edf4fa'; ctx.beginPath();
