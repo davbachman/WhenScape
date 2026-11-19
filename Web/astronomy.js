@@ -36,3 +36,32 @@ export function clamp(value, min, max) { return Math.min(max, Math.max(min, valu
 export function compassName(degrees) {
   return ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(((degrees % 360 + 360) % 360) / 45) % 8];
 }
+
+/**
+ * The Sun's path over the solar day containing `time`: samples from one local
+ * solar midnight to the next, plus that day's sunrise and sunset if they occur.
+ * Using the solar day keeps the daylight stretch in one piece without needing
+ * the civil time zone.
+ */
+export function sunTrack({ latitude, longitude, time, stepMinutes = 10, elevation = 1.7 }) {
+  const instant = new Date(time).getTime();
+  if (!Number.isFinite(instant) || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    throw new RangeError('A valid instant and geographic coordinates are required.');
+  }
+  const day = 86400000, solarOffset = longitude / 15 * 3600000;
+  const start = Math.floor((instant + solarOffset) / day) * day - solarOffset;
+  const observer = new Astronomy.Observer(latitude, longitude, elevation);
+  const at = ms => {
+    const date = new Date(ms);
+    const equator = Astronomy.Equator(Astronomy.Body.Sun, date, observer, true, true);
+    const horizon = Astronomy.Horizon(date, observer, equator.ra, equator.dec, 'normal');
+    return { time: ms, altitude: horizon.altitude, azimuth: horizon.azimuth };
+  };
+  const samples = [];
+  for (let ms = start; ms <= start + day; ms += stepMinutes * 60000) samples.push(at(ms));
+  const event = direction => {
+    const found = Astronomy.SearchRiseSet(Astronomy.Body.Sun, observer, direction, new Date(start), 1);
+    return found && found.date.getTime() <= start + day ? at(found.date.getTime()) : null;
+  };
+  return { start, end: start + day, samples, sunrise: event(+1), sunset: event(-1), at };
+}

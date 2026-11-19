@@ -1,4 +1,5 @@
-import { calculateAstronomy, clamp, compassName } from './astronomy.js';
+import { calculateAstronomy, clamp, compassName, sunTrack } from './astronomy.js';
+import { domePoint, ringPoints, daylightRuns, hourMarks, clockLabel } from './guides.js';
 import { WeatherController } from './weather.js';
 import { createCloudStage } from './clouds.js';
 import { flagExtension, flagShape, flagShadow, shadowOffset } from './flag.js';
@@ -14,7 +15,9 @@ let heading = 0, pitch = 0.025, eyeHeight = 1.7;
 // air and only holds up from above: the camera orbits the pin, looking down.
 const droneLimits = { minPitch: -80 * Math.PI / 180, maxPitch: -6 * Math.PI / 180, minRange: 60, maxRange: 2500 };
 let dronePitch = -20 * Math.PI / 180, droneRange = 175;
-let flag, flagTimer, lastFlagRender = 0;
+let flag, flagTimer, lastFlagRender = 0, lastSkyRender = 0;
+let guides, guidesKey, sunMarker, track, trackKey;
+const cloudDrift = { x: 0, y: 0 };
 let geometryGeneration = 0, positionGeneration = 0, weatherGeneration = 0;
 let activeToken, terrainAvailable = false, geometryMessage = 'Geographic data unavailable';
 let weather = { kind: 'missing', label: 'Weather unavailable', detail: 'Choose a place and time.', renderPrecipitation: false };
@@ -93,6 +96,8 @@ function createViewer() {
   cloudStage = viewer.scene.postProcessStages.add(createCloudStage(C, viewer.scene));
   prepareStarTextures();
   flag = createFlag();
+  guides = new C.CustomDataSource('guides');
+  viewer.dataSources.add(guides);
   viewer.scene.renderError.addEventListener((_scene, error) => failScene(error));
   const handler = viewer.screenSpaceEventHandler;
   handler.removeInputAction(C.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
@@ -280,7 +285,76 @@ function updateFlag() {
       flag.clothShadow.polygon.material = shade;
     }
   }
+  updateGuides();
   viewer.scene.requestRender();
+}
+
+// The place's civil time zone, when the app supplies a valid one.
+function sceneTimeZone() {
+  if (!state?.timeZone) return null;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: state.timeZone }); return state.timeZone; } catch { return null; }
+}
+
+// Compass ring on the ground and the day's Sun path overhead, both centred on
+// the flag. The arc is a dome: each point lies in the Sun's real direction at
+// that time, so sunrise and sunset meet the ring at their compass bearings.
+function updateGuides() {
+  if (!guides) return;
+  guides.show = photoreal;
+  if (!photoreal || !state) return;
+  const { at } = pinFrame();
+  const radius = flagHeight() * 2.2;
+  const key = `${state.latitude},${state.longitude},${state.time.slice(0, 10)}`;
+  if (key !== trackKey || !track || Date.parse(state.time) < track.start || Date.parse(state.time) >= track.end) {
+    track = sunTrack(state);
+    trackKey = key;
+  }
+  const zone = sceneTimeZone();
+  const event = state.rangeEnabled ? [Date.parse(state.start), Date.parse(state.end)] : null;
+  const layout = [state.latitude, state.longitude, Math.round(eyeHeight * 10), Math.round(radius), track.start, zone, event?.join('-')].join('|');
+  const ink = C.Color.fromCssColorString('#ffd24a');
+  const always = Number.POSITIVE_INFINITY;
+  const label = (text, color = C.Color.WHITE, size = 12) => ({ text, font: `600 ${size}px -apple-system, "Helvetica Neue", sans-serif`,
+    fillColor: color, outlineColor: C.Color.BLACK.withAlpha(0.75), outlineWidth: 3, style: C.LabelStyle.FILL_AND_OUTLINE,
+    pixelOffset: new C.Cartesian2(0, -13), disableDepthTestDistance: always });
+  const dome = sample => { const p = domePoint(Math.max(sample.altitude, 0), sample.azimuth, radius); return at(p.e, p.n, p.up); };
+  if (layout !== guidesKey) {
+    guidesKey = layout;
+    guides.entities.removeAll();
+    guides.entities.add({ polyline: { positions: ringPoints(radius).map(p => at(p.e, p.n)), width: 2, clampToGround: true,
+      classificationType: C.ClassificationType.CESIUM_3D_TILE, material: C.Color.WHITE.withAlpha(0.75) } });
+    for (const [name, bearing] of [['N', 0], ['E', 90], ['S', 180], ['W', 270]]) {
+      const p = domePoint(0, bearing, radius * 1.1);
+      guides.entities.add({ position: at(p.e, p.n, 1), label: { ...label(name, name === 'N' ? C.Color.fromCssColorString('#ffb27a') : C.Color.WHITE, 15),
+        pixelOffset: C.Cartesian2.ZERO } });
+    }
+    for (const run of daylightRuns(track.samples)) {
+      const ends = [track.sunrise, ...run, track.sunset].filter(Boolean).sort((a, b) => a.time - b.time);
+      guides.entities.add({ polyline: { positions: ends.map(dome), width: 2, material: ink.withAlpha(0.9),
+        depthFailMaterial: ink.withAlpha(0.3) } });
+    }
+    // The part of the day the selected event covers, drawn heavier.
+    if (event) for (const run of daylightRuns(track.samples, event[0], event[1])) {
+      guides.entities.add({ polyline: { positions: run.map(dome), width: 6, material: C.Color.fromCssColorString('#ff8a3c'),
+        depthFailMaterial: C.Color.fromCssColorString('#ff8a3c').withAlpha(0.35) } });
+    }
+    if (zone) for (const mark of hourMarks(track.start, track.end, zone)) {
+      const sample = track.at(mark.time);
+      if (sample.altitude <= 1) continue;
+      guides.entities.add({ position: dome(sample), point: { pixelSize: 5, color: C.Color.WHITE, outlineColor: C.Color.BLACK.withAlpha(0.6), outlineWidth: 1,
+        disableDepthTestDistance: always }, label: mark.hour % 3 === 0 ? label(mark.label, C.Color.WHITE, 11) : undefined });
+    }
+    for (const [name, sample] of [['Sunrise', track.sunrise], ['Sunset', track.sunset]]) {
+      if (!sample) continue;
+      guides.entities.add({ position: dome(sample), point: { pixelSize: 7, color: ink, outlineColor: C.Color.BLACK.withAlpha(0.6), outlineWidth: 1,
+        disableDepthTestDistance: always }, label: label(zone ? `${name} ${clockLabel(sample.time, zone)}` : name, ink) });
+    }
+    sunMarker = guides.entities.add({ point: { pixelSize: 15, color: C.Color.fromCssColorString('#fff3b0'), outlineColor: ink, outlineWidth: 3,
+      disableDepthTestDistance: always } });
+  }
+  const sun = astronomy?.sun;
+  sunMarker.show = !!sun && sun.altitude > 0;
+  if (sunMarker.show) sunMarker.position = dome(sun);
 }
 
 async function placeObserver() {
@@ -503,9 +577,16 @@ function updateLightAndWeather() {
   const enabled = state.weatherEnabled && weather.kind !== 'missing';
   const clouds = enabled ? clamp((weather.cloudCover ?? 0) / 100, 0, 1) : 0;
   const daylight = clamp((astronomy.sun.altitude + 8) / 20, 0, 1);
-  cloudStage.uniforms.cloudCover = clouds;
-  cloudStage.uniforms.daylight = daylight;
-  cloudStage.enabled = viewer.scene.pickPositionSupported && clouds > 0.05;
+  // The stage paints the whole sky, clear or cloudy, wherever depth is available.
+  const paintedSky = viewer.scene.pickPositionSupported;
+  cloudStage.enabled = paintedSky;
+  if (paintedSky) {
+    cloudStage.uniforms.cloudCover = clouds;
+    const visibilityNow = enabled ? weather.visibility : null;
+    cloudStage.uniforms.haze = visibilityNow > 0 ? clamp(1 - Math.log10(visibilityNow / 200) / 2, 0, 1) : 0;
+    // The stage draws its own Sun; Cesium's would show through at dusk.
+    if (viewer.scene.sun) viewer.scene.sun.show = false;
+  }
   viewer.scene.light.intensity = (0.04 + 1.96 * daylight) * (1 - clouds * 0.68);
   viewer.scene.shadowMap.enabled = clouds < 0.88;
   viewer.scene.skyAtmosphere.saturationShift = -clouds * 0.8;
@@ -666,6 +747,18 @@ function drawEffects(delta) {
       }
     }
     ctx.globalAlpha = 1;
+  }
+  // Drift the clouds downwind. Real cloud speed would be imperceptible, so it
+  // is exaggerated; without wind data they creep east. A few frames a second
+  // are enough for motion this slow.
+  if (delta > 0 && !state.reducedMotion && cloudStage.enabled) {
+    const speed = weather.windDirection == null ? 1.5 : Math.max(wind, 1);
+    const toward = ((weather.windDirection ?? 270) + 180) * Math.PI / 180;
+    cloudDrift.x -= Math.sin(toward) * speed * delta * 0.0016;
+    cloudDrift.y -= Math.cos(toward) * speed * delta * 0.0016;
+    cloudStage.uniforms.cloudOffset = new C.Cartesian2(cloudDrift.x, cloudDrift.y);
+    const now = performance.now();
+    if ((weather.cloudCover ?? 0) > 5 && now - lastSkyRender > 120) { lastSkyRender = now; viewer.scene.requestRender(); }
   }
   // Keep the flag waving. The 3D scene otherwise renders only on demand, so
   // ask for a frame about twenty times a second while there is wind to show.

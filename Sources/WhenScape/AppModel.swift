@@ -166,7 +166,8 @@ final class AppModel: ObservableObject {
         let formatter = ISO8601DateFormatter()
         return ["latitude": latitude, "longitude": longitude, "location": locationName,
                 "time": formatter.string(from: instant), "start": formatter.string(from: interval.start),
-                "end": formatter.string(from: interval.end), "weatherEnabled": weatherEnabled,
+                "end": formatter.string(from: interval.end), "rangeEnabled": rangeEnabled,
+                "timeZone": timeZone.identifier, "weatherEnabled": weatherEnabled,
                 "snowCover": snowCover, "reducedMotion": reducedMotion, "detail": detail, "ionToken": ionToken]
     }
     func receiveSceneStatus(_ status: [String: Any]) {
