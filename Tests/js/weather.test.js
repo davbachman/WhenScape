@@ -201,3 +201,58 @@ test('an hourly series covers an interval and carries feels-like and gusts', asy
   const far = await controller.getSeries({ latitude: 34.1, longitude: -117.728, start: '2027-06-01T00:00:00Z', end: '2027-06-01T05:00:00Z' });
   assert.deepEqual(far, [], 'hours beyond the forecast window are left out');
 });
+
+test('a request the service rejects is repeated without the optional values', async () => {
+  const requests = [];
+  const controller = new WeatherController({
+    now: () => new Date('2026-11-19T10:00:00Z'),
+    fetch: async url => {
+      requests.push(url);
+      if (url.includes('wind_gusts_10m')) return { ok: false, status: 400, json: async () => ({ error: true }) };
+      const time = Array.from({ length: 24 }, (_, i) => Date.parse('2026-11-19T00:00:00Z') / 1000 + i * 3600);
+      const hourly = { time };
+      for (const key of new URL(url).searchParams.get('hourly').split(',')) hourly[key] = time.map(() => 12);
+      return { ok: true, status: 200, json: async () => ({ hourly }) };
+    }
+  });
+  const result = await controller.getConditions({ latitude: 34.1, longitude: -117.728, time: '2026-11-19T10:30:00Z' });
+  assert.equal(result.kind, 'forecast');
+  assert.equal(result.temperature, 12);
+  assert.equal(result.windGust, null);
+  assert.equal(requests.length, 2);
+  assert.ok(!requests[1].includes('apparent_temperature') && requests[1].includes('temperature_2m'));
+});
+
+test('recent past hours come from the forecast service when the archive has not caught up', async () => {
+  const requests = [];
+  const controller = new WeatherController({
+    now: () => new Date('2026-11-19T10:00:00Z'),
+    fetch: async url => {
+      requests.push(url);
+      const query = new URL(url).searchParams;
+      const time = Array.from({ length: 24 }, (_, i) => Date.parse(query.get('start_date') + 'T00:00:00Z') / 1000 + i * 3600);
+      const archive = url.includes('archive-api');
+      const hourly = { time };
+      // The archive answers for recent days, but with no values yet.
+      for (const key of query.get('hourly').split(',')) hourly[key] = time.map(() => archive && query.get('start_date') > '2026-11-10' ? null : archive ? 5 : 15);
+      return { ok: true, status: 200, json: async () => ({ hourly }) };
+    }
+  });
+  const place = { latitude: 34.1, longitude: -117.728 };
+  const yesterday = await controller.getConditions({ ...place, time: '2026-11-18T20:00:00Z' });
+  assert.equal(yesterday.kind, 'historical');
+  assert.equal(yesterday.temperature, 15);
+  assert.match(yesterday.detail, /recent past hour/);
+  assert.ok(requests[0].includes('api.open-meteo.com/v1/forecast'), 'within a week, the forecast service is asked first');
+
+  requests.length = 0;
+  const lastMonth = await controller.getConditions({ ...place, time: '2026-10-20T20:00:00Z' });
+  assert.equal(lastMonth.temperature, 5, 'older hours come from the archive');
+  assert.equal(requests.length, 1);
+  assert.ok(requests[0].includes('archive-api'));
+
+  requests.length = 0;
+  const twoWeeks = await controller.getConditions({ ...place, time: '2026-11-11T20:00:00Z' });
+  assert.equal(twoWeeks.temperature, 15, 'an empty archive day falls back to the forecast service');
+  assert.deepEqual(requests.map(url => url.includes('archive-api')), [true, false]);
+});

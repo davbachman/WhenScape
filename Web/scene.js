@@ -749,7 +749,7 @@ function updateWeatherHUD() {
   $('feels-like').textContent = feels;
   $('feels-like').hidden = !feels;
   $('weather-detail').textContent = sky ? 'Weather effects are off.'
-    : weather.kind === 'missing' ? `${weather.detail || 'Weather is unavailable.'} Clear sky is illustrative.`
+    : weather.kind === 'missing' ? `${weather.detail || 'Weather is unavailable.'}${weather.error ? ` (${weather.error})` : ''} Clear sky is illustrative.`
     : weather.kind === 'seasonal' ? 'Seasonal averages, not a prediction. Falling precipitation is not inferred from averages.' : '';
   $('weather-detail').hidden = !$('weather-detail').textContent;
 

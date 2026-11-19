@@ -53,7 +53,7 @@ Weather comes from Open-Meteo, with explicit provenance:
 | Selected time | Source and representation |
 | --- | --- |
 | Current hour through the provider’s 16-day forecast window | Hourly forecast; illustrative cloud cover/light, falling rain/snow, fog and wind |
-| Earlier hours | Historical archive estimates; recent hours can be unavailable because archives lag |
+| Earlier hours | Historical archive estimates. The archive runs several days behind, so hours from roughly the last three months fall back to the forecast service’s record of past hours when the archive has none |
 | Beyond the forecast window | Five prior complete years of ERA5 samples, within ±3 calendar days at the same UTC hour; at least three years and 14 samples required |
 | Missing or failed data | Weather unavailable; no precipitation is invented |
 

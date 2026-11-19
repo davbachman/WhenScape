@@ -29,23 +29,27 @@
   <div id="fatal-message" class="glass notice" role="alert" hidden></div>
   <div class="bottom-hud">
     <div class="glass conditions">
-      <div class="eyebrow" id="weather-kind">WEATHER</div>
-      <div class="headline">
-        <div id="temperature"></div>
-        <div><div id="weather-summary">Loading conditions…</div><div class="secondary" id="feels-like" hidden></div></div>
+      <div class="block now">
+        <div class="eyebrow" id="weather-kind">WEATHER</div>
+        <div class="headline">
+          <div id="temperature"></div>
+          <div><div id="weather-summary">Loading conditions…</div><div class="secondary" id="feels-like" hidden></div></div>
+        </div>
       </div>
-      <div id="briefing" hidden></div>
-      <div class="secondary" id="weather-detail" hidden></div>
-      <div class="facts">
-        <span id="wind-line" hidden></span><span id="rain-line" hidden></span><span id="moon-line"></span>
+      <div class="block words">
+        <div id="briefing" hidden></div>
+        <div class="secondary" id="weather-detail" hidden></div>
+        <div class="facts">
+          <span id="wind-line" hidden></span><span id="rain-line" hidden></span><span id="moon-line"></span>
+          <span id="snow-label" hidden>Illustrative white surfaces</span>
+        </div>
+        <div class="weather-actions">
+          <details id="weather-provenance"><summary>Data details</summary><div id="weather-source-detail" class="glass"></div></details>
+          <button id="refresh-weather" type="button" title="Retry or refresh weather data">Refresh</button>
+          <a id="weather-attribution" href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer" hidden>Open-Meteo</a>
+        </div>
       </div>
-      <div id="timeline" hidden></div>
-      <div id="snow-label" class="secondary" hidden>Illustrative white surfaces</div>
-      <div class="weather-actions">
-        <details id="weather-provenance"><summary>Data details</summary><div id="weather-source-detail"></div></details>
-        <button id="refresh-weather" type="button" title="Retry or refresh weather data">Refresh</button>
-        <a id="weather-attribution" href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer" hidden>Open-Meteo</a>
-      </div>
+      <div class="block chart"><div id="timeline" hidden></div></div>
     </div>
   </div>
   <div class="footnote"><span id="geometry-status">Preparing scene</span><span class="rotate-hint" id="rotate-hint">Drag to look · ↑ ↓ ← →</span></div>

@@ -27,16 +27,21 @@ h1 { font-size: clamp(20px, 2.8vw, 29px); font-weight: 500; letter-spacing: -0.8
 .notice p { font-size: 12px; color: #c6d0da; margin: 8px 0 0; line-height: 1.6; }
 /* The geometry footer stays visible while expanded provenance takes priority. */
 body:has(#weather-provenance[open]) #setup-message { visibility: hidden; }
-.bottom-hud { z-index: 3; position: absolute; bottom: 66px; left: 27px; right: 27px; display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; pointer-events: none; }
-.conditions { padding: 14px 17px 11px; width: 374px; max-width: 100%; max-height: calc(100vh - 150px); overflow: auto; pointer-events: auto; }
+.bottom-hud { z-index: 3; position: absolute; bottom: 48px; left: 20px; right: 20px; pointer-events: none; }
+/* A low bar across the bottom, so the scene above it stays clear. */
+.conditions { position: relative; display: flex; align-items: center; gap: 6px 22px; padding: 9px 16px; pointer-events: auto; }
+.conditions .now { flex: none; }
+.conditions .words { flex: 1 1 240px; min-width: 0; }
+.conditions .chart { flex: 0 1 300px; min-width: 0; }
+.conditions .chart:has(#timeline[hidden]) { display: none; }
 .conditions .eyebrow { color: #a9bac8; font-size: 9px; margin-bottom: 6px; }
 .headline { display: flex; align-items: center; gap: 12px; }
-#temperature { font-size: 40px; font-weight: 300; letter-spacing: -1.5px; line-height: 1; font-variant-numeric: tabular-nums; }
+#temperature { font-size: 34px; font-weight: 300; letter-spacing: -1.2px; line-height: 1; font-variant-numeric: tabular-nums; }
 #temperature:empty { display: none; }
 #weather-summary { font-size: 16px; font-weight: 500; }
-#briefing { margin-top: 9px; font-size: 13px; line-height: 1.45; color: #eef1f4; }
-.facts { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 3px 14px; font-size: 11px; color: #c5ced8; }
-#timeline { margin-top: 10px; border-radius: 6px; overflow: hidden; }
+#briefing { font-size: 13px; line-height: 1.4; color: #eef1f4; }
+.facts { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 11px; color: #c5ced8; }
+#timeline { border-radius: 6px; overflow: hidden; }
 #timeline svg { display: block; width: 100%; height: auto; }
 #timeline text { font: 9px -apple-system, BlinkMacSystemFont, sans-serif; fill: #dfe6ec; text-anchor: middle; }
 #timeline .temp { font-size: 10px; font-weight: 600; fill: #ffe6c2; paint-order: stroke; stroke: #0b1220aa; stroke-width: 2.5px; }
@@ -46,12 +51,13 @@ body:has(#weather-provenance[open]) #setup-message { visibility: hidden; }
 #timeline .sun { stroke: #ffd24a; stroke-width: 1; stroke-dasharray: 2 2; }
 #timeline .now { stroke: #fff; stroke-width: 1.4; }
 #timeline .now-dot { fill: #fff; }
-#weather-detail { margin-top: 6px; }
+#weather-detail { margin-top: 3px; }
 #weather-attribution { font-size: 10px; color: #a9bac8; pointer-events: auto; text-underline-offset: 2px; white-space: nowrap; }
-.weather-actions { margin-top: 9px; display: flex; align-items: flex-start; gap: 14px; pointer-events: auto; opacity: 0.8; }
-#weather-provenance { flex: 1; font-size: 10px; color: #c3d4e0; }
+.weather-actions { margin-top: 4px; display: flex; align-items: center; gap: 14px; pointer-events: auto; opacity: 0.75; }
+#weather-provenance { font-size: 10px; color: #c3d4e0; }
 #weather-provenance summary { cursor: pointer; }
-#weather-source-detail { white-space: pre-line; line-height: 1.6; margin-top: 7px; max-height: 180px; overflow: auto; }
+/* Opens upward as a card, so the bar keeps its height. */
+#weather-source-detail { position: absolute; left: 0; bottom: calc(100% + 8px); width: min(420px, 100%); padding: 12px 14px; white-space: pre-line; line-height: 1.6; max-height: 220px; overflow: auto; background: #18232cf2; }
 #refresh-weather { color: #d6e1e9; background: none; padding: 0; border: 0; cursor: pointer; font: inherit; font-size: 10px; }
 #refresh-weather:hover { color: #fff; text-decoration: underline; }
 .footnote { position: absolute; bottom: 30px; left: 28px; right: 28px; display: flex; justify-content: space-between; gap: 15px; color: #d1dae3; font-size: 9px; opacity: 0.7; z-index: 3; text-shadow: 0 1px 5px #000a; pointer-events: none; }
@@ -59,7 +65,9 @@ body:has(#weather-provenance[open]) #setup-message { visibility: hidden; }
 .cesium-credit-textContainer, .cesium-credit-logoContainer { font-size: 9px !important; }
 .cesium-widget-credits { text-shadow: 0 1px 4px #000; }
 .cesium-viewer-toolbar, .cesium-viewer-animationContainer, .cesium-viewer-timelineContainer, .cesium-viewer-fullscreenContainer { display: none !important; }
-@media (max-width: 600px) { .top-hud { top: 18px; left: 18px; right: 18px; } .bottom-hud { left: 18px; right: 18px; } .conditions { max-width: 66%; } .rotate-hint { display: none; } }
+@media (max-width: 760px) { .conditions { flex-wrap: wrap; } .conditions .chart { flex-basis: 100%; } }
+@media (max-width: 600px) { .top-hud { top: 18px; left: 18px; right: 18px; } .bottom-hud { left: 12px; right: 12px; } .rotate-hint { display: none; } }
+@media (max-height: 460px) { .conditions .chart { display: none; } }
 @media (max-height: 500px) { #setup-message { top: 115px; width: auto; max-width: calc(100% - 36px); padding: 10px 14px; } #setup-message .notice-icon, #setup-message p { display: none; } }
 @media (prefers-reduced-transparency: reduce) { .glass { background: #1c2b38; backdrop-filter: none; } }
 .cesium-credit-logoContainer img { height: 16px !important; width: auto !important; opacity: 0.8; }

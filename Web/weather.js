@@ -9,8 +9,11 @@ const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const FORECAST = 'https://api.open-meteo.com/v1/forecast';
 const ARCHIVE = 'https://archive-api.open-meteo.com/v1/archive';
-const COMMON = ['temperature_2m', 'apparent_temperature', 'cloud_cover', 'precipitation', 'rain', 'snowfall',
-  'wind_speed_10m', 'wind_gusts_10m', 'wind_direction_10m', 'snow_depth'];
+const COMMON = ['temperature_2m', 'cloud_cover', 'precipitation', 'rain', 'snowfall',
+  'wind_speed_10m', 'wind_direction_10m', 'snow_depth'];
+// Nice to have. If the service rejects a request that includes them, it is
+// repeated without them, so they can never cost the essential values.
+const EXTRAS = ['apparent_temperature', 'wind_gusts_10m'];
 
 function finite(value) { return typeof value === 'number' && Number.isFinite(value) ? value : null; }
 function nonnegative(value) { const v = finite(value); return v === null || v < 0 ? null : v; }
@@ -162,27 +165,27 @@ export class WeatherController {
     }
     try {
       if (kind === 'seasonal') return await this.seasonal(latitude, longitude, date, now, signal);
-      const day = datePart(date);
-      const entry = await this.load(latitude, longitude, day, day, kind, signal);
-      const sample = hourlySample(entry.data.hourly, date);
+      const { sample, entry, recent } = await this.hour(latitude, longitude, date, kind, now, signal);
       if (!hasData(sample)) {
         return missing(date, entry.fetchedAt,
-          kind === 'historical' ? 'No historical estimate is available for this hour. Recent archive data may be delayed.' : 'The provider has no forecast values for this hour.');
+          kind === 'historical' ? 'No historical estimate is available for this hour.' : 'The provider has no forecast values for this hour.');
       }
       return {
         ...sample, kind,
         label: kind === 'forecast' ? 'Forecast' : 'Historical estimate',
         fetchedAt: entry.fetchedAt,
-        source: 'Open-Meteo', sourceURL: kind === 'forecast' ? 'https://open-meteo.com/en/docs' : 'https://open-meteo.com/en/docs/historical-weather-api',
+        source: 'Open-Meteo', sourceURL: kind === 'forecast' || recent ? 'https://open-meteo.com/en/docs' : 'https://open-meteo.com/en/docs/historical-weather-api',
         renderPrecipitation: true,
         detail: kind === 'forecast'
           ? 'Hourly model forecast for the surrounding grid. Clouds and precipitation placement are illustrative; wind is estimated at 10 m.'
-          : 'Hourly gridded historical model estimate, not an observation at this exact spot. Clouds and precipitation placement are illustrative; wind is estimated at 10 m.'
+          : recent
+            ? 'Hourly model estimate for a recent past hour, from the forecast service because the historical archive does not cover it yet. Not an observation at this exact spot. Clouds and precipitation placement are illustrative; wind is estimated at 10 m.'
+            : 'Hourly gridded historical model estimate, not an observation at this exact spot. Clouds and precipitation placement are illustrative; wind is estimated at 10 m.'
       };
     } catch (error) {
       if (signal?.aborted || error?.name === 'AbortError') throw abortError();
       return missing(date, now.toISOString(),
-        kind === 'historical' ? 'Historical weather could not be loaded. Recent archive data may be delayed. Astronomy remains available.' : 'Weather could not be loaded. Astronomy remains available.',
+        kind === 'historical' ? 'Historical weather could not be loaded. Astronomy remains available.' : 'Weather could not be loaded. Astronomy remains available.',
         error instanceof Error ? error.message : 'Weather service unavailable.');
     }
   }
@@ -205,15 +208,41 @@ export class WeatherController {
       const kind = classifyTime(date, now);
       if (kind === 'seasonal' || date.getUTCFullYear() < 1940) continue;
       try {
-        const day = datePart(date);
-        const entry = await this.load(latitude, longitude, day, day, kind, signal);
-        const sample = hourlySample(entry.data.hourly, date);
+        const { sample } = await this.hour(latitude, longitude, date, kind, now, signal);
         if (hasData(sample)) samples.push({ ...sample, time: hour, kind });
       } catch (error) {
         if (signal?.aborted || error?.name === 'AbortError') throw abortError();
       }
     }
     return samples;
+  }
+
+  /**
+   * One hour's sample for a forecast or past instant. The historical archive
+   * runs several days behind, while the forecast service keeps about three
+   * months of past hours, so recent past hours use whichever has them: the
+   * forecast service first within the last week, the archive first before that.
+   */
+  async hour(latitude, longitude, date, kind, now, signal) {
+    const day = datePart(date);
+    const age = now.getTime() - date.getTime();
+    const sources = kind === 'forecast' ? ['forecast']
+      : age < 7 * DAY ? ['forecast', 'historical'] : age < 85 * DAY ? ['historical', 'forecast'] : ['historical'];
+    let failure, empty;
+    for (const source of sources) {
+      try {
+        const entry = await this.load(latitude, longitude, day, day, source, signal);
+        const sample = hourlySample(entry.data.hourly, date);
+        const found = { sample, entry, recent: kind === 'historical' && source === 'forecast' };
+        if (hasData(sample)) return found;
+        empty ??= found;
+      } catch (error) {
+        if (signal?.aborted || error?.name === 'AbortError') throw abortError();
+        failure ??= error;
+      }
+    }
+    if (empty) return empty;
+    throw failure;
   }
 
   async seasonal(latitude, longitude, date, now, signal) {
@@ -258,7 +287,10 @@ export class WeatherController {
       hourly: [...COMMON, ...(kind === 'forecast' ? ['showers', 'visibility', 'precipitation_probability'] : [])].join(',')
     });
     if (kind === 'seasonal') params.set('models', 'era5');
-    const url = `${kind === 'forecast' ? FORECAST : ARCHIVE}?${params}`;
+    const endpoint = kind === 'forecast' ? FORECAST : ARCHIVE;
+    const essential = `${endpoint}?${params}`;
+    params.set('hourly', `${params.get('hourly')},${EXTRAS.join(',')}`);
+    const url = `${endpoint}?${params}`;
     const timestamp = new Date(this.now()).getTime();
     const cached = this.cache.get(url);
     if (cached && timestamp < cached.expiresAt) {
@@ -267,7 +299,10 @@ export class WeatherController {
       return abortable(Promise.resolve(cached), signal);
     }
     if (this.inflight.has(url)) return abortable(this.inflight.get(url), signal);
-    const request = this.download(url).then(data => {
+    const request = this.download(url).catch(error => {
+      if (error?.status !== 400) throw error;
+      return this.download(essential);
+    }).then(data => {
       const ttl = kind === 'forecast' ? 30 * 60_000 : kind === 'seasonal' ? 7 * DAY : DAY;
       const entry = { data, fetchedAt: new Date(this.now()).toISOString(), expiresAt: new Date(this.now()).getTime() + ttl };
       this.remember(url, entry);
@@ -292,7 +327,7 @@ export class WeatherController {
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       const response = await this.fetch(url, { signal: controller.signal, credentials: 'omit', referrerPolicy: 'no-referrer' });
-      if (!response.ok) throw new Error(`Weather service returned HTTP ${response.status}.`);
+      if (!response.ok) throw Object.assign(new Error(`Weather service returned HTTP ${response.status}.`), { status: response.status });
       const data = await response.json();
       if (data.error || !data.hourly || !Array.isArray(data.hourly.time)) throw new Error('The weather service returned an unusable response.');
       return data;
