@@ -1,4 +1,6 @@
-import { calculateAstronomy, clamp, compassName, sunTrack } from './astronomy.js';
+import { calculateAstronomy, clamp, compassName, sunTrack, moonEvents } from './astronomy.js';
+import { unitsFor, formatTemperature, conditionName, windReadout, notableGust, summaryLine } from './briefing.js';
+import { timelineMarkup } from './timeline.js';
 import { domePoint, ringPoints, daylightRuns, hourMarks, clockLabel } from './guides.js';
 import { WeatherController } from './weather.js';
 import { createCloudStage } from './clouds.js';
@@ -17,6 +19,8 @@ const droneLimits = { minPitch: -80 * Math.PI / 180, maxPitch: -6 * Math.PI / 18
 let dronePitch = -20 * Math.PI / 180, droneRange = 175;
 let flag, flagTimer, lastFlagRender = 0, lastSkyRender = 0;
 let guides, guidesKey, sunMarker, track, trackKey;
+let series = [], seriesKey, seriesAbort, moonTimes, moonKey, timelineEvents = {};
+const units = unitsFor(globalThis.navigator?.language ?? 'en-US');
 const cloudDrift = { x: 0, y: 0 };
 let geometryGeneration = 0, positionGeneration = 0, weatherGeneration = 0;
 let activeToken, terrainAvailable = false, geometryMessage = 'Geographic data unavailable';
@@ -243,8 +247,12 @@ function createFlag() {
   const cloth = () => {
     const { ground, at } = pinFrame();
     const { windSpeed, windFrom } = flagWind();
-    const phase = weatherClock * (2 + (windSpeed ?? 0) * 0.3);
-    const shape = flagShape({ height: flagHeight(), windSpeed, windFrom, phase });
+    // Notable gusts arrive as occasional surges toward the gust speed.
+    const gust = flagWind().windSpeed != null ? notableGust(weather) : null;
+    const surge = gust ? clamp((Math.sin(weatherClock * 0.9) + Math.sin(weatherClock * 0.37 + 1.7) - 0.9) / 0.9, 0, 1) : 0;
+    const blowing = windSpeed == null ? null : windSpeed + ((gust ?? windSpeed) - windSpeed) * surge;
+    const phase = weatherClock * (2 + (blowing ?? 0) * 0.3);
+    const shape = flagShape({ height: flagHeight(), windSpeed: blowing, windFrom, phase });
     return { positions: shape.map(p => at(p.e, p.n)), tops: shape.map(p => ground + p.top), bottoms: shape.map(p => ground + p.bottom) };
   };
   const shade = C.Color.BLACK.withAlpha(0.4);
@@ -268,8 +276,10 @@ function updateFlag() {
   // Direct sunlight strong enough to cast a visible shadow.
   const enabled = state.weatherEnabled && weather.kind !== 'missing';
   const clouds = enabled ? clamp((weather.cloudCover ?? 0) / 100, 0, 1) : 0;
-  const sun = astronomy?.sun;
-  const shadowed = shown && sun && sun.altitude > 1.5 && clouds < 0.85;
+  // By day the Sun casts the shadow; on a clear night a bright Moon casts a fainter one.
+  const moonlit = astronomy && astronomy.sun.altitude < -4 && astronomy.moon.altitude > 5 && astronomy.moonIlluminatedFraction > 0.25;
+  const sun = moonlit ? astronomy.moon : astronomy?.sun;
+  const shadowed = shown && sun && (moonlit ? clouds < 0.6 : sun.altitude > 1.5 && clouds < 0.85);
   flag.poleShadow.show = flag.clothShadow.show = !!shadowed;
   if (shown) {
     const { at } = pinFrame();
@@ -277,7 +287,7 @@ function updateFlag() {
     flag.pole.polyline.positions = [at(0, 0, 0), at(0, 0, height)];
     if (shadowed) {
       const tip = shadowOffset(height, sun.altitude, sun.azimuth);
-      const shade = C.Color.BLACK.withAlpha(0.45 * Math.pow(1 - clouds, 1.5));
+      const shade = C.Color.BLACK.withAlpha((moonlit ? 0.3 * astronomy.moonIlluminatedFraction : 0.45) * Math.pow(1 - clouds, 1.5));
       flag.poleShadow.polyline.positions = [at(0, 0), at(tip.e, tip.n)];
       flag.poleShadow.polyline.material = shade;
       flag.clothShadow.polygon.hierarchy = new C.PolygonHierarchy(
@@ -296,6 +306,17 @@ function sceneTimeZone() {
   try { new Intl.DateTimeFormat('en-US', { timeZone: state.timeZone }); return state.timeZone; } catch { return null; }
 }
 
+// The Sun's path for the solar day containing the selected instant, shared by
+// the guides, the summary and the timeline.
+function ensureTrack() {
+  const key = `${state.latitude},${state.longitude}`, now = Date.parse(state.time);
+  if (key !== trackKey || !track || now < track.start || now >= track.end) {
+    track = sunTrack(state);
+    trackKey = key;
+  }
+  return track;
+}
+
 // Compass ring on the ground and the day's Sun path overhead, both centred on
 // the flag. The arc is a dome: each point lies in the Sun's real direction at
 // that time, so sunrise and sunset meet the ring at their compass bearings.
@@ -305,11 +326,7 @@ function updateGuides() {
   if (!photoreal || !state) return;
   const { at } = pinFrame();
   const radius = flagHeight() * 2.2;
-  const key = `${state.latitude},${state.longitude},${state.time.slice(0, 10)}`;
-  if (key !== trackKey || !track || Date.parse(state.time) < track.start || Date.parse(state.time) >= track.end) {
-    track = sunTrack(state);
-    trackKey = key;
-  }
+  ensureTrack();
   const zone = sceneTimeZone();
   const event = state.rangeEnabled ? [Date.parse(state.start), Date.parse(state.end)] : null;
   const layout = [state.latitude, state.longitude, Math.round(eyeHeight * 10), Math.round(radius), track.start, zone, event?.join('-')].join('|');
@@ -704,46 +721,97 @@ function updateLightAndWeather() {
 
 function updateWeatherHUD() {
   const sky = !state.weatherEnabled;
+  const known = !sky && weather.kind !== 'missing';
+  const zone = sceneTimeZone();
   const sunLabel = `${astronomy.light} · Sun ${Math.round(astronomy.sun.altitude)}°`;
   $('weather-kind').textContent = sky ? 'CLEAR-SKY PREVIEW' : weather.label.toUpperCase();
   $('weather-attribution').hidden = weather.kind === 'missing';
-  const detailLines = [weather.detail];
+  const detailLines = [weather.detail, sunLabel];
   if (weather.source) detailLines.push(`Source: ${weather.source}`);
   if (weather.validAt) detailLines.push(`For: ${formatUTC(weather.validAt)}`);
   if (weather.fetchedAt) detailLines.push(`Retrieved: ${formatUTC(weather.fetchedAt)}`);
   if (weather.precipitationProbability != null) detailLines.push(`Chance of precipitation: ${Math.round(weather.precipitationProbability)}% (not intensity)`);
   if (weather.precipitation != null && weather.kind !== 'seasonal') detailLines.push(`Precipitation: ${weather.precipitation.toFixed(1)} mm over the preceding hour`);
   if (weather.snowfall != null && weather.kind !== 'seasonal') detailLines.push(`Snowfall: ${weather.snowfall.toFixed(1)} cm over the preceding hour`);
-  if (weather.temperatureRange) detailLines.push(`Historical 10th–90th percentile: ${weather.temperatureRange.map(x => Math.round(x) + '°C').join(' to ')}`);
+  if (weather.windSpeed != null && weather.windDirection != null) detailLines.push(`Wind from ${Math.round(weather.windDirection)}° at ${weather.windSpeed.toFixed(1)} m/s, estimated at 10 m`);
+  if (weather.temperatureRange) detailLines.push(`Historical 10th–90th percentile: ${weather.temperatureRange.map(x => formatTemperature(x, units)).join(' to ')}`);
   if (weather.wetHourFrequency != null) detailLines.push(`Historical wet-hour frequency: ${Math.round(weather.wetHourFrequency)}% (not a forecast probability)`);
   if (weather.cloudCover == null) detailLines.push('Cloud cover unavailable; sky appearance is illustrative.');
   if (weather.kind === 'forecast' && Date.now() - Date.parse(weather.fetchedAt) > 2 * 60 * 60_000) detailLines.push('Forecast data is stale. Refresh when a connection is available.');
+  detailLines.push('The sky, clouds, haze, shadows and precipitation are illustrative.');
   $('weather-source-detail').textContent = detailLines.filter(Boolean).join('\n');
-  if (sky) {
-    $('weather-summary').textContent = sunLabel;
-    $('weather-detail').textContent = `${astronomy.moonPhaseName} · ${Math.round(astronomy.moonIlluminatedFraction * 100)}% illuminated. Weather effects are off.`;
-  } else if (weather.kind === 'missing') {
-    $('weather-summary').textContent = sunLabel;
-    $('weather-detail').textContent = `${weather.detail || 'Weather is unavailable.'} Clear sky is illustrative.`;
-  } else {
-    const temperature = weather.temperature == null ? '' : `${Math.round(weather.temperature)}°C · `;
-    const condition = weather.renderPrecipitation && weather.snowfall > 0 ? 'Snow'
-      : weather.renderPrecipitation && weather.rain > 0 ? 'Rain'
-      : weather.visibility != null && weather.visibility < 1000 ? 'Fog'
-      : weather.cloudCover == null ? 'Cloud cover unavailable'
-      : weather.cloudCover > 80 ? 'Overcast' : weather.cloudCover > 20 ? 'Partly cloudy' : 'Mostly clear';
-    $('weather-summary').textContent = `${temperature}${condition}`;
-    $('weather-detail').textContent = weather.kind === 'seasonal'
-      ? 'Seasonal averages · representative light, not a prediction. Falling precipitation is not inferred from averages.'
-      : `${sunLabel}. ${weather.kind === 'historical' ? 'Historical grid estimate.' : 'Forecast conditions.'} Effects are illustrative.`;
+
+  // Headline: temperature and condition, or the light when there is no weather.
+  $('temperature').textContent = known ? formatTemperature(weather.temperature, units) ?? '' : '';
+  $('weather-summary').textContent = known ? conditionName(weather) : sunLabel;
+  const feels = known && weather.apparentTemperature != null && weather.temperature != null &&
+    Math.abs(weather.apparentTemperature - weather.temperature) >= 2 ? `Feels like ${formatTemperature(weather.apparentTemperature, units)}` : '';
+  $('feels-like').textContent = feels;
+  $('feels-like').hidden = !feels;
+  $('weather-detail').textContent = sky ? 'Weather effects are off.'
+    : weather.kind === 'missing' ? `${weather.detail || 'Weather is unavailable.'} Clear sky is illustrative.`
+    : weather.kind === 'seasonal' ? 'Seasonal averages, not a prediction. Falling precipitation is not inferred from averages.' : '';
+  $('weather-detail').hidden = !$('weather-detail').textContent;
+
+  // One sentence for the whole picture.
+  const day = ensureTrack(), now = Date.parse(state.time);
+  const start = Date.parse(state.start), end = Date.parse(state.end);
+  const ranged = !!state.rangeEnabled && end > start;
+  $('briefing').textContent = summaryLine({ weather: known ? weather : null, units, sun: {
+    time: now, start, end, rangeEnabled: ranged, sunrise: day.sunrise?.time, sunset: day.sunset?.time,
+    sunUpAtStart: ranged ? day.at(start).altitude > 0 : undefined, sunUp: astronomy.sun.altitude > 0 } });
+  $('briefing').hidden = !$('briefing').textContent;
+
+  const wind = sky ? null : windReadout(weather, units);
+  $('wind-line').hidden = !wind;
+  $('wind-line').textContent = wind ?? '';
+  const chance = known && weather.precipitationProbability != null ? `Rain chance ${Math.round(weather.precipitationProbability)}%` : '';
+  $('rain-line').hidden = !chance;
+  $('rain-line').textContent = chance;
+  const moonKeyNow = `${state.latitude},${state.longitude},${state.time.slice(0, 13)}`;
+  if (moonKeyNow !== moonKey) { moonKey = moonKeyNow; try { moonTimes = moonEvents(state); } catch { moonTimes = null; } }
+  const moonUp = astronomy.moon.altitude > 0, nextMoon = moonUp ? moonTimes?.set : moonTimes?.rise;
+  $('moon-line').textContent = `${astronomy.moonPhaseName} · ${Math.round(astronomy.moonIlluminatedFraction * 100)}% lit` +
+    (zone && nextMoon ? ` · ${moonUp ? 'sets' : 'rises'} ${clockLabel(nextMoon, zone)}` : moonUp ? ' · up' : ' · down');
+  updateTimeline();
+}
+
+// Hourly conditions across the selected interval, for the timeline strip.
+function queueSeries() {
+  if (!state) return;
+  const key = `${state.latitude.toFixed(3)},${state.longitude.toFixed(3)},${state.start?.slice(0, 13)},${state.end?.slice(0, 13)},${state.weatherEnabled}`;
+  if (key === seriesKey) return;
+  seriesKey = key;
+  seriesAbort?.abort();
+  series = [];
+  updateTimeline();
+  const start = Date.parse(state.start), end = Date.parse(state.end);
+  if (!state.weatherEnabled || !(end > start)) return;
+  const controller = seriesAbort = new AbortController();
+  weatherController.getSeries({ latitude: state.latitude, longitude: state.longitude, start: state.start, end: state.end, signal: controller.signal })
+    .then(samples => { if (key === seriesKey && !controller.signal.aborted) { series = samples; updateTimeline(); } })
+    .catch(() => {});
+}
+
+function updateTimeline() {
+  if (!state || !astronomy) return;
+  const start = Date.parse(state.start), end = Date.parse(state.end);
+  const panel = $('timeline');
+  if (!(end > start) || end - start > 4 * 86400000) { panel.hidden = true; return; }
+  const zone = sceneTimeZone(), day = ensureTrack();
+  // Sunrise and sunset for each solar day the interval touches.
+  const eventsKey = `${state.latitude},${state.longitude},${start},${end},${zone}`;
+  const events = eventsKey === timelineEvents.key ? timelineEvents.list : [];
+  if (eventsKey !== timelineEvents.key) for (let t = start; t < end + 86400000; t += 86400000) {
+    const each = t === Date.parse(state.time) ? day : sunTrack({ ...state, time: new Date(Math.min(t, end)).toISOString() });
+    for (const [name, sample] of [['Sunrise', each.sunrise], ['Sunset', each.sunset]]) {
+      if (sample && !events.some(e => Math.abs(e.time - sample.time) < 60000)) events.push({ time: sample.time, label: zone ? `${name} ${clockLabel(sample.time, zone)}` : name });
+    }
   }
-  const windKnown = state.weatherEnabled && weather.windSpeed != null;
-  $('wind-line').hidden = !windKnown;
-  if (windKnown) {
-    $('wind-line').textContent = weather.windSpeed <= 0.25 ? 'Calm'
-      : weather.windDirection == null ? `Wind ${weather.windSpeed.toFixed(1)} m/s · direction unknown`
-      : `Wind from ${compassName(weather.windDirection)} ${Math.round(weather.windDirection)}° · ${weather.windSpeed.toFixed(1)} m/s`;
-  }
+  timelineEvents = { key: eventsKey, list: events };
+  panel.hidden = false;
+  panel.innerHTML = timelineMarkup({ start, end, now: Date.parse(state.time), series, sunAltitude: t => day.at(t).altitude, sunEvents: events,
+    formatTemperature: c => formatTemperature(c, units), startLabel: zone ? clockLabel(start, zone) : '', endLabel: zone ? clockLabel(end, zone) : '' });
 }
 
 function queueWeather() {
@@ -904,6 +972,12 @@ function update(next) {
   const previous = state;
   state = { weatherEnabled: true, snowCover: false, reducedMotion: false, detail: 'balanced', ionToken: '', ...next };
   state.time = new Date(state.time).toISOString();
+  // Without a valid interval, use the 24 hours around the selected instant.
+  const instant = Date.parse(state.time), from = Date.parse(state.start), until = Date.parse(state.end);
+  const valid = Number.isFinite(from) && Number.isFinite(until) && until > from;
+  state.start = new Date(valid ? from : instant - 12 * 3_600_000).toISOString();
+  state.end = new Date(valid ? until : instant + 12 * 3_600_000).toISOString();
+  if (!valid) state.rangeEnabled = false;
   if (!viewer) return;
   $('place-name').textContent = state.location || 'Selected location';
   $('scene-coordinate').textContent = `${Math.abs(state.latitude).toFixed(4)}° ${state.latitude < 0 ? 'S' : 'N'}  ·  ${Math.abs(state.longitude).toFixed(4)}° ${state.longitude < 0 ? 'W' : 'E'}`;
@@ -936,6 +1010,7 @@ function update(next) {
   }
   updateLightAndWeather();
   queueWeather();
+  queueSeries();
   viewer.scene.requestRender();
   postStatus();
 }

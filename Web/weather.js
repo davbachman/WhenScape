@@ -9,8 +9,8 @@ const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const FORECAST = 'https://api.open-meteo.com/v1/forecast';
 const ARCHIVE = 'https://archive-api.open-meteo.com/v1/archive';
-const COMMON = ['temperature_2m', 'cloud_cover', 'precipitation', 'rain', 'snowfall',
-  'wind_speed_10m', 'wind_direction_10m', 'snow_depth'];
+const COMMON = ['temperature_2m', 'apparent_temperature', 'cloud_cover', 'precipitation', 'rain', 'snowfall',
+  'wind_speed_10m', 'wind_gusts_10m', 'wind_direction_10m', 'snow_depth'];
 
 function finite(value) { return typeof value === 'number' && Number.isFinite(value) ? value : null; }
 function nonnegative(value) { const v = finite(value); return v === null || v < 0 ? null : v; }
@@ -63,11 +63,13 @@ export function hourlySample(hourly, time) {
   const direction = finite(at('wind_direction_10m'));
   return {
     temperature: finite(at('temperature_2m')),
+    apparentTemperature: finite(at('apparent_temperature')),
     cloudCover: percentage(at('cloud_cover')),
     precipitation: nonnegative(at('precipitation')),
     rain: rain === null || (hasShowers && showers === null) ? null : rain + (showers ?? 0),
     snowfall: nonnegative(at('snowfall')),
     windSpeed: nonnegative(at('wind_speed_10m')),
+    windGust: nonnegative(at('wind_gusts_10m')),
     windDirection: direction === null || direction < 0 || direction > 360 ? null : direction % 360,
     visibility: nonnegative(at('visibility')),
     snowDepth: nonnegative(at('snow_depth')),
@@ -96,7 +98,7 @@ export function meanWind(samples) {
 }
 
 export function aggregateSeasonal(samples) {
-  const fields = ['temperature', 'cloudCover', 'precipitation', 'rain', 'snowfall', 'windSpeed'];
+  const fields = ['temperature', 'apparentTemperature', 'cloudCover', 'precipitation', 'rain', 'snowfall', 'windSpeed', 'windGust'];
   const output = Object.fromEntries(fields.map(name => [name, mean(samples.map(s => s[name]))]));
   const temperatures = samples.map(s => s.temperature).filter(x => finite(x) !== null).sort((a, b) => a - b);
   const precipitation = samples.map(s => s.precipitation).filter(x => finite(x) !== null);
@@ -115,8 +117,8 @@ export function aggregateSeasonal(samples) {
 function missing(time, fetchedAt, detail, error) {
   return {
     kind: 'missing', label: 'Weather unavailable',
-    temperature: null, cloudCover: null, precipitation: null, rain: null, snowfall: null,
-    windSpeed: null, windDirection: null, visibility: null, snowDepth: null,
+    temperature: null, apparentTemperature: null, cloudCover: null, precipitation: null, rain: null, snowfall: null,
+    windSpeed: null, windGust: null, windDirection: null, visibility: null, snowDepth: null,
     precipitationProbability: null, renderPrecipitation: false,
     fetchedAt, validAt: new Date(time).toISOString(), detail, ...(error ? { error } : {})
   };
@@ -183,6 +185,35 @@ export class WeatherController {
         kind === 'historical' ? 'Historical weather could not be loaded. Recent archive data may be delayed. Astronomy remains available.' : 'Weather could not be loaded. Astronomy remains available.',
         error instanceof Error ? error.message : 'Weather service unavailable.');
     }
+  }
+
+  /**
+   * Hourly samples across an interval, for a timeline. Hours beyond the
+   * forecast window are omitted rather than filled with seasonal averages,
+   * and an hour whose day cannot be loaded is omitted too. At most four days.
+   */
+  async getSeries({ latitude, longitude, start, end, signal } = {}) {
+    checkAbort(signal);
+    const first = Math.floor(new Date(start).getTime() / HOUR) * HOUR, last = new Date(end).getTime();
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !Number.isFinite(first) || !Number.isFinite(last)) {
+      throw new RangeError('A valid latitude, longitude and interval are required.');
+    }
+    const now = new Date(this.now());
+    const samples = [];
+    for (let hour = first; hour <= last && samples.length < 96 && hour - first < 4 * DAY; hour += HOUR) {
+      const date = new Date(hour);
+      const kind = classifyTime(date, now);
+      if (kind === 'seasonal' || date.getUTCFullYear() < 1940) continue;
+      try {
+        const day = datePart(date);
+        const entry = await this.load(latitude, longitude, day, day, kind, signal);
+        const sample = hourlySample(entry.data.hourly, date);
+        if (hasData(sample)) samples.push({ ...sample, time: hour, kind });
+      } catch (error) {
+        if (signal?.aborted || error?.name === 'AbortError') throw abortError();
+      }
+    }
+    return samples;
   }
 
   async seasonal(latitude, longitude, date, now, signal) {

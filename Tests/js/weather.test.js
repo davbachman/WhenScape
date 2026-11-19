@@ -176,3 +176,28 @@ test('cache has a fixed upper bound', async () => {
   for (const latitude of [10, 11, 12]) await controller.getConditions({ ...base, latitude, time: '2026-11-16T15:00:00Z' });
   assert.equal(controller.cache.size, 2);
 });
+
+test('an hourly series covers an interval and carries feels-like and gusts', async () => {
+  const requests = [];
+  const controller = new WeatherController({
+    now: () => new Date('2026-11-19T10:00:00Z'),
+    fetch: async url => {
+      requests.push(url);
+      const query = new URL(url).searchParams;
+      const begin = Date.parse(query.get('start_date') + 'T00:00:00Z') / 1000;
+      const times = Array.from({ length: 24 }, (_, i) => begin + i * 3600);
+      const hourly = { time: times };
+      for (const key of query.get('hourly').split(',')) hourly[key] = times.map((_, i) => key === 'temperature_2m' ? i : key === 'apparent_temperature' ? i - 2 : key === 'wind_gusts_10m' ? 9 : 1);
+      return { ok: true, status: 200, json: async () => ({ hourly }) };
+    }
+  });
+  const series = await controller.getSeries({ latitude: 34.1, longitude: -117.728, start: '2026-11-19T22:30:00Z', end: '2026-11-20T02:00:00Z' });
+  assert.deepEqual(series.map(s => new Date(s.time).toISOString().slice(0, 13)), ['2026-11-19T22', '2026-11-19T23', '2026-11-20T00', '2026-11-20T01', '2026-11-20T02']);
+  assert.deepEqual(series.map(s => s.temperature), [22, 23, 0, 1, 2]);
+  assert.equal(series[0].apparentTemperature, 20);
+  assert.equal(series[0].windGust, 9);
+  assert.equal(requests.length, 2, 'one request per calendar day');
+  assert.ok(requests.every(url => url.includes('apparent_temperature') && url.includes('wind_gusts_10m')));
+  const far = await controller.getSeries({ latitude: 34.1, longitude: -117.728, start: '2027-06-01T00:00:00Z', end: '2027-06-01T05:00:00Z' });
+  assert.deepEqual(far, [], 'hours beyond the forecast window are left out');
+});

@@ -65,3 +65,14 @@ export function sunTrack({ latitude, longitude, time, stepMinutes = 10, elevatio
   };
   return { start, end: start + day, samples, sunrise: event(+1), sunset: event(-1), at };
 }
+
+/** The Moon's next rise and set after `time`, as epoch milliseconds, or null if none within two days. */
+export function moonEvents({ latitude, longitude, time, elevation = 1.7 }) {
+  const date = new Date(time);
+  if (!Number.isFinite(date.getTime()) || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    throw new RangeError('A valid instant and geographic coordinates are required.');
+  }
+  const observer = new Astronomy.Observer(latitude, longitude, elevation);
+  const next = direction => Astronomy.SearchRiseSet(Astronomy.Body.Moon, observer, direction, date, 2)?.date.getTime() ?? null;
+  return { rise: next(+1), set: next(-1) };
+}
