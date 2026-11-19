@@ -81,6 +81,28 @@ export function hourlySample(hourly, time) {
   };
 }
 
+const BLENDED = ['temperature', 'apparentTemperature', 'cloudCover', 'precipitation', 'rain', 'snowfall',
+  'windSpeed', 'windGust', 'visibility', 'snowDepth', 'precipitationProbability'];
+
+/**
+ * Conditions part-way between two hourly samples, so moving through time
+ * changes them gradually instead of jumping on the hour. A value missing
+ * from either sample is left as the earlier one. Wind direction turns the
+ * short way round the compass.
+ */
+export function blendSamples(earlier, later, fraction) {
+  const f = Math.min(1, Math.max(0, fraction));
+  const blended = { ...earlier };
+  for (const name of BLENDED) {
+    if (earlier[name] != null && later[name] != null) blended[name] = earlier[name] + (later[name] - earlier[name]) * f;
+  }
+  if (earlier.windDirection != null && later.windDirection != null) {
+    const turn = ((later.windDirection - earlier.windDirection + 540) % 360) - 180;
+    blended.windDirection = (earlier.windDirection + turn * f + 360) % 360;
+  }
+  return blended;
+}
+
 function hasData(sample) {
   return sample && ['temperature', 'cloudCover', 'precipitation', 'windSpeed'].some(k => sample[k] !== null);
 }
@@ -165,7 +187,23 @@ export class WeatherController {
     }
     try {
       if (kind === 'seasonal') return await this.seasonal(latitude, longitude, date, now, signal);
-      const { sample, entry, recent } = await this.hour(latitude, longitude, date, kind, now, signal);
+      const found = await this.hour(latitude, longitude, date, kind, now, signal);
+      const { entry, recent } = found;
+      let sample = found.sample;
+      // Blend toward the next hour's sample when there is one.
+      const within = (date.getTime() % HOUR) / HOUR;
+      if (hasData(sample) && within > 0) {
+        const nextHour = new Date(Math.floor(date.getTime() / HOUR) * HOUR + HOUR);
+        const nextKind = classifyTime(nextHour, now);
+        if (nextKind !== 'seasonal') {
+          try {
+            const next = await this.hour(latitude, longitude, nextHour, nextKind, now, signal);
+            if (hasData(next.sample)) sample = blendSamples(sample, next.sample, within);
+          } catch (error) {
+            if (signal?.aborted || error?.name === 'AbortError') throw abortError();
+          }
+        }
+      }
       if (!hasData(sample)) {
         return missing(date, entry.fetchedAt,
           kind === 'historical' ? 'No historical estimate is available for this hour.' : 'The provider has no forecast values for this hour.');

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { WeatherController, classifyTime, seasonalWindows, hourlySample, meanWind, aggregateSeasonal } from '../../Web/weather.js';
+import { WeatherController, classifyTime, seasonalWindows, hourlySample, meanWind, aggregateSeasonal, blendSamples } from '../../Web/weather.js';
 
 const NOW = new Date('2026-11-16T14:30:00Z');
 const base = { latitude: 34.0967, longitude: -117.7198 };
@@ -255,4 +255,30 @@ test('recent past hours come from the forecast service when the archive has not 
   const twoWeeks = await controller.getConditions({ ...place, time: '2026-11-11T20:00:00Z' });
   assert.equal(twoWeeks.temperature, 15, 'an empty archive day falls back to the forecast service');
   assert.deepEqual(requests.map(url => url.includes('archive-api')), [true, false]);
+});
+
+test('conditions change gradually between hourly values', async () => {
+  const controller = new WeatherController({
+    now: () => new Date('2026-11-19T10:00:00Z'),
+    fetch: async url => {
+      const query = new URL(url).searchParams;
+      const time = Array.from({ length: 24 }, (_, i) => Date.parse(query.get('start_date') + 'T00:00:00Z') / 1000 + i * 3600);
+      const hourly = { time };
+      // Hour 18 is clear and dry; hour 19 is overcast, wet and murky, with the wind backing through north.
+      const at = (key, i) => ({ cloud_cover: i === 19 ? 100 : 20, rain: i === 19 ? 2 : 0, precipitation: i === 19 ? 2 : 0,
+        visibility: i === 19 ? 2000 : 20000, wind_direction_10m: i === 19 ? 10 : 350, temperature_2m: i, showers: 0 }[key] ?? 1);
+      for (const key of query.get('hourly').split(',')) hourly[key] = time.map((_, i) => at(key, i));
+      return { ok: true, status: 200, json: async () => ({ hourly }) };
+    }
+  });
+  const place = { latitude: 34.1, longitude: -117.728 };
+  const onTheHour = await controller.getConditions({ ...place, time: '2026-11-19T18:00:00Z' });
+  assert.equal(onTheHour.cloudCover, 20);
+  const late = await controller.getConditions({ ...place, time: '2026-11-19T18:57:00Z' });
+  const early = await controller.getConditions({ ...place, time: '2026-11-19T19:03:00Z' });
+  assert.ok(Math.abs(late.cloudCover - 96) < 0.01, String(late.cloudCover));
+  assert.ok(Math.abs(late.visibility - 2900) < 1 && Math.abs(late.rain - 1.9) < 0.01);
+  assert.ok(Math.abs(late.windDirection - 9) < 0.01, 'the wind turns the short way through north');
+  assert.ok(Math.abs(late.cloudCover - early.cloudCover) < 6 && Math.abs(late.temperature - early.temperature) < 0.2,
+    'a few minutes either side of the hour look alike');
 });

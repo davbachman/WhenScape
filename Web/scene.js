@@ -25,7 +25,7 @@ const cloudDrift = { x: 0, y: 0 };
 let geometryGeneration = 0, positionGeneration = 0, weatherGeneration = 0;
 let activeToken, terrainAvailable = false, geometryMessage = 'Geographic data unavailable';
 let weather = { kind: 'missing', label: 'Weather unavailable', detail: 'Choose a place and time.', renderPrecipitation: false };
-let lastWeatherKey, weatherTimer, weatherAbort, lastAstronomyKey;
+let lastWeatherKey, lastWeatherPlace, weatherTimer, weatherAbort, lastAstronomyKey;
 let lastWeatherAttempt = 0;
 let weatherController = new WeatherController();
 let animationFrame, lastFrame = 0, weatherClock = 0, lastStatus = 0;
@@ -339,11 +339,14 @@ function updateGuides() {
   if (layout !== guidesKey) {
     guidesKey = layout;
     guides.entities.removeAll();
-    guides.entities.add({ polyline: { positions: ringPoints(radius).map(p => at(p.e, p.n)), width: 2, clampToGround: true,
-      classificationType: C.ClassificationType.CESIUM_3D_TILE, material: C.Color.WHITE.withAlpha(0.75) } });
+    // A level circle just above the pin's ground height. Draping it over the
+    // mesh breaks it up across roofs and trees; where it passes behind them
+    // it is drawn faintly instead.
+    guides.entities.add({ polyline: { positions: ringPoints(radius).map(p => at(p.e, p.n, 1.5)), width: 2,
+      material: C.Color.WHITE.withAlpha(0.8), depthFailMaterial: C.Color.WHITE.withAlpha(0.28) } });
     for (const [name, bearing] of [['N', 0], ['E', 90], ['S', 180], ['W', 270]]) {
       const p = domePoint(0, bearing, radius * 1.1);
-      guides.entities.add({ position: at(p.e, p.n, 1), label: { ...label(name, name === 'N' ? C.Color.fromCssColorString('#ffb27a') : C.Color.WHITE, 15),
+      guides.entities.add({ position: at(p.e, p.n, 1.5), label: { ...label(name, name === 'N' ? C.Color.fromCssColorString('#ffb27a') : C.Color.WHITE, 15),
         pixelOffset: C.Cartesian2.ZERO } });
     }
     for (const run of daylightRuns(track.samples)) {
@@ -587,7 +590,9 @@ function updateBuildingStyle() {
         vec3 photo = material.diffuse;
         float brightness = dot(photo, vec3(0.299, 0.587, 0.114));
         vec3 color = mix(photo, vec3(0.92, 0.94, 0.97), u_snow);
-        color *= 1.0 - 0.28 * u_wet;
+        color *= 1.0 - 0.14 * u_wet;
+        // Under heavy cloud the light is flat: less colour, not just less light.
+        color = mix(color, vec3(dot(color, vec3(0.299, 0.587, 0.114))), 0.3 * smoothstep(0.55, 1.0, u_cloudCover));
         vec3 offset = fsInput.attributes.positionWC - u_pin;
         vec2 ground = vec2(dot(offset, u_east), dot(offset, u_north)) / 1500.0 + u_cloudOffset;
         float threshold = mix(0.72, 0.18, u_cloudCover);
@@ -632,7 +637,7 @@ function meshLight() {
   const warmth = clamp(1 - Math.abs(altitude - 2) / 12, 0, 1) * (1 - clouds * 0.8);
   const mix = (night, day, warm) => {
     const base = night + (day - night) * daylight;
-    return (base + (warm - base) * warmth * 0.6) * (1 - clouds * 0.3 * daylight);
+    return (base + (warm - base) * warmth * 0.6) * (1 - clouds * 0.2 * daylight);
   };
   return new C.Cartesian3(mix(0.03, 1, 1.0), mix(0.04, 1, 0.76), mix(0.075, 1, 0.56));
 }
@@ -669,7 +674,7 @@ function updateMeshShader() {
   tintShader.setUniform('u_light', light);
   tintShader.setUniform('u_hazeColor', horizonColor());
   const visibility = enabled && weather.visibility > 0 ? weather.visibility : null;
-  tintShader.setUniform('u_hazeDensity', clamp(visibility ? 2.5 / visibility : 1 / 18000, 1 / 18000, 1 / 60));
+  tintShader.setUniform('u_hazeDensity', clamp(visibility ? 1.6 / visibility : 1 / 18000, 1 / 18000, 1 / 120));
   const { at } = pinFrame();
   const pin = at(0, 0), east = at(1, 0), north = at(0, 1);
   tintShader.setUniform('u_pin', pin);
@@ -816,16 +821,24 @@ function updateTimeline() {
 
 function queueWeather() {
   if (!state) return;
-  const key = `${state.latitude.toFixed(5)},${state.longitude.toFixed(5)},${state.time.slice(0, 13)}`;
+  // Conditions are blended between hourly values, so refresh every few minutes of selected time.
+  const place = `${state.latitude.toFixed(5)},${state.longitude.toFixed(5)}`;
+  const key = `${place},${Math.floor(Date.parse(state.time) / 300_000)}`;
   if (key === lastWeatherKey) return;
+  const moved = place !== lastWeatherPlace;
+  lastWeatherPlace = place;
   lastWeatherKey = key;
   lastWeatherAttempt = Date.now();
   const generation = ++weatherGeneration;
   clearTimeout(weatherTimer);
   weatherAbort?.abort();
-  weather = { kind: 'missing', label: 'Loading weather', detail: 'Fetching conditions for the selected place and hour.', renderPrecipitation: false };
-  updateLightAndWeather();
-  postStatus(true);
+  // Keep showing the current conditions while nearby times load, so moving
+  // through time does not flash to a clear sky. Blank only for a new place.
+  if (moved || weather.kind === 'missing') {
+    weather = { kind: 'missing', label: 'Loading weather', detail: 'Fetching conditions for the selected place and hour.', renderPrecipitation: false };
+    updateLightAndWeather();
+    postStatus(true);
+  }
   weatherTimer = setTimeout(async () => {
     const controller = new AbortController();
     weatherAbort = controller;
@@ -840,7 +853,7 @@ function queueWeather() {
     }
     updateLightAndWeather();
     postStatus(true);
-  }, 350);
+  }, moved ? 350 : 60);
 }
 
 function formatUTC(instant) {
@@ -880,7 +893,9 @@ function drawEffects(delta) {
   const wind = weather.windSpeed ?? 0;
   const windAngle = ((weather.windDirection ?? 0) * Math.PI / 180) - heading;
   const drift = Math.sin(windAngle) * wind;
-  if (weather.visibility != null && weather.visibility < 6000) {
+  // The flat fog sheet suits the ground view. From the air the mesh already
+  // fades with distance, and a sheet would bury the whole scene and its labels.
+  if (!photoreal && weather.visibility != null && weather.visibility < 6000) {
     const opacity = clamp(1 - weather.visibility / 6000, 0, 0.7);
     const shade = Math.round(28 + daylight * 152);
     const fog = ctx.createLinearGradient(0, 0, 0, height);
