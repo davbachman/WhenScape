@@ -250,12 +250,52 @@ struct TimeControls: View {
         .environment(\.timeZone, model.timeZone)
     }
 
+    // Typing in a field or choosing from its calendar both count as choosing a
+    // time, which clears the selected event (the slider and playback do not).
     @ViewBuilder private var dateFields: some View {
         if model.rangeEnabled {
-            DatePicker("From", selection: Binding(get: { model.start }, set: { model.setStart($0) }), displayedComponents: [.date, .hourAndMinute])
-            DatePicker("To", selection: Binding(get: { model.end }, set: { model.setEnd($0) }), in: model.start.addingTimeInterval(60)..., displayedComponents: [.date, .hourAndMinute])
+            DateField(label: "From", selection: Binding(get: { model.start }, set: { model.chooseStart($0) }))
+            DateField(label: "To", selection: Binding(get: { model.end }, set: { model.chooseEnd($0) }),
+                      earliest: model.start.addingTimeInterval(60))
         } else {
-            DatePicker("Date & time", selection: $model.instant, displayedComponents: [.date, .hourAndMinute])
+            DateField(label: "Date & time", selection: Binding(get: { model.instant }, set: { model.chooseInstant($0) }))
+        }
+    }
+}
+
+/// A date and time field with a button that opens a calendar and clock.
+private struct DateField: View {
+    let label: String
+    @Binding var selection: Date
+    var earliest: Date?
+    @State private var showingCalendar = false
+    @Environment(\.timeZone) private var timeZone
+    var body: some View {
+        HStack(spacing: 4) {
+            picker(label)
+            Button { showingCalendar.toggle() } label: { Image(systemName: "calendar") }
+                .buttonStyle(.borderless)
+                .help("Choose \(label.lowercased()) from a calendar")
+                .accessibilityLabel("Choose \(label.lowercased()) from a calendar")
+                .popover(isPresented: $showingCalendar, arrowEdge: .top) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        picker(label).datePickerStyle(.graphical).labelsHidden()
+                        HStack {
+                            Button("Now") { selection = Date() }
+                            Spacer()
+                            Button("Done") { showingCalendar = false }.keyboardShortcut(.defaultAction)
+                        }
+                    }.padding(14)
+                    // The popover is presented apart from the controls; keep the place's time zone.
+                    .environment(\.timeZone, timeZone)
+                }
+        }
+    }
+    @ViewBuilder private func picker(_ title: String) -> some View {
+        if let earliest {
+            DatePicker(title, selection: $selection, in: earliest..., displayedComponents: [.date, .hourAndMinute])
+        } else {
+            DatePicker(title, selection: $selection, displayedComponents: [.date, .hourAndMinute])
         }
     }
 }

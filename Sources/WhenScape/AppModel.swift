@@ -94,6 +94,19 @@ final class AppModel: ObservableObject {
 
     func resetToEvent() { if let event = sourceEvent { selectEvent(event) } }
 
+    /// A date or time the user chose themselves replaces the event's time, so
+    /// the event is no longer what is being explored. The place stays.
+    func clearEventSelection() {
+        guard selectedEventID != nil || sourceEvent != nil else { return }
+        sourceEvent = nil
+        selectedEventID = nil
+        selectedEventTitle = nil
+        pendingAllDayTime = nil
+    }
+    func chooseInstant(_ date: Date) { clearEventSelection(); instant = date }
+    func chooseStart(_ date: Date) { clearEventSelection(); setStart(date) }
+    func chooseEnd(_ date: Date) { clearEventSelection(); setEnd(date) }
+
     func setLocation(_ coordinate: CLLocationCoordinate2D, name: String? = nil, knownTimeZone: TimeZone? = nil) {
         guard CLLocationCoordinate2DIsValid(coordinate) else { return }
         geocoder.cancelGeocode()

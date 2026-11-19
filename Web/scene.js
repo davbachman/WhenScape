@@ -154,13 +154,15 @@ function installRotation() {
   canvas.style.touchAction = 'none';
   canvas.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
-    pointer = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    // In the aerial view a sideways drag turns the scene like a turntable:
+    // grabbing below the pin moves the near side, so the turn is reversed.
+    pointer = { id: e.pointerId, x: e.clientX, y: e.clientY, turn: photoreal && belowPin(e) ? -1 : 1 };
     canvas.setPointerCapture(e.pointerId);
     $('scene').focus({ preventScroll: true });
   });
   canvas.addEventListener('pointermove', e => {
     if (!pointer || pointer.id !== e.pointerId) return;
-    heading -= (e.clientX - pointer.x) * 0.003;
+    heading -= (e.clientX - pointer.x) * 0.003 * pointer.turn;
     const tilt = (e.clientY - pointer.y) * 0.003;
     // In the aerial view, dragging down lifts the camera toward a top-down view.
     if (photoreal) dronePitch = clamp(dronePitch - tilt, droneLimits.minPitch, droneLimits.maxPitch);
@@ -192,6 +194,15 @@ function installRotation() {
     else return;
     e.preventDefault(); setCamera();
   });
+}
+
+// Whether a pointer event lies below the pin's ground point on screen. The
+// orbit keeps the pin at the centre, which is the fallback if it cannot be projected.
+function belowPin(e) {
+  const rect = viewer.canvas.getBoundingClientRect();
+  const pin = state && C.SceneTransforms.worldToWindowCoordinates(viewer.scene,
+    C.Cartesian3.fromDegrees(state.longitude, state.latitude, eyeHeight - 1.7));
+  return e.clientY - rect.top > (pin ? pin.y : rect.height / 2);
 }
 
 function normalizeHeading() { return (((heading * 180 / Math.PI) % 360) + 360) % 360; }
