@@ -388,10 +388,19 @@ async function placeObserver() {
   if (photoreal) {
     try {
       // The mesh is the ground here, so sample it instead of a terrain provider.
-      const [position] = await viewer.scene.sampleHeightMostDetailed([C.Cartographic.fromDegrees(longitude, latitude)]);
+      // Sample the pin and a ring of points a few metres around it, and take
+      // the lowest: the mesh is a surface, so a pin under a tree or at a roof
+      // edge would otherwise put the ground at canopy or roof height. The
+      // flag and guides are excluded so they are never mistaken for ground.
+      const metres = 1 / 111_320, across = Math.cos(latitude * Math.PI / 180);
+      const around = [[0, 0], ...Array.from({ length: 8 }, (_, i) => [Math.sin(i * Math.PI / 4) * 5, Math.cos(i * Math.PI / 4) * 5])];
+      const points = around.map(([east, north]) => C.Cartographic.fromDegrees(longitude + east * metres / across, latitude + north * metres));
+      const overlays = [...Object.values(flag ?? {}), ...(guides?.entities.values ?? [])];
+      const sampled = await viewer.scene.sampleHeightMostDetailed(points, overlays);
       if (generation !== positionGeneration) return;
-      if (!Number.isFinite(position?.height)) throw new Error('No mesh height');
-      eyeHeight = position.height + 1.7;
+      const heights = sampled.map(p => p?.height).filter(Number.isFinite);
+      if (!heights.length) throw new Error('No mesh height');
+      eyeHeight = Math.min(...heights) + 1.7;
       setCamera();
     } catch {
       if (generation !== positionGeneration) return;
