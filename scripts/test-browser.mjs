@@ -38,7 +38,7 @@ try {
   assert.match(await page.locator('#geometry-status').textContent(), /not loaded/);
   await page.waitForFunction(() => window.whenScapeStatus?.weather?.kind === 'forecast');
   assert.match(await page.locator('#weather-summary').textContent(), /Rain/);
-  assert.equal(await page.locator('#wind-indicator').isVisible(), true);
+  assert.equal(await page.locator('#wind-line').isVisible(), true);
   await page.locator('#scene').focus();
   await page.keyboard.press('ArrowRight');
   await page.waitForTimeout(300);
@@ -50,7 +50,7 @@ try {
     time: '2024-06-21T20:00:00Z', ionToken: '', weatherEnabled: false, reducedMotion: true };
   await page.evaluate(state => window.whenScape.update(state), state);
   assert.equal(await page.locator('#weather-kind').textContent(), 'CLEAR-SKY PREVIEW');
-  assert.equal(await page.locator('#wind-indicator').isVisible(), false);
+  assert.equal(await page.locator('#wind-line').isVisible(), false);
   assert.ok((await page.evaluate(() => window.whenScapeStatus.sunAltitude)) > 65);
 
   snow = true;

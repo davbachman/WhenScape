@@ -39,14 +39,11 @@ body:has(#weather-provenance[open]) #setup-message { visibility: hidden; }
 #weather-source-detail { white-space: pre-line; line-height: 1.6; margin-top: 7px; max-height: 180px; overflow: auto; }
 #refresh-weather { color: #d6e1e9; background: none; padding: 0; border: 0; cursor: pointer; font: inherit; font-size: 10px; }
 #refresh-weather:hover { color: #fff; text-decoration: underline; }
-.wind { display: flex; align-items: center; padding: 8px 13px 8px 5px; gap: 3px; flex-shrink: 0; }
-.wind span { font-size: 12px; white-space: nowrap; }
-.wind small { display: block; color: #bdcbd6; font-size: 10px; margin-top: 4px; }
 .footnote { position: absolute; bottom: 34px; left: 28px; right: 28px; display: flex; justify-content: space-between; gap: 15px; color: #d1dae3; font-size: 10px; z-index: 3; text-shadow: 0 1px 5px #000a; pointer-events: none; }
 .cesium-viewer-bottom { left: 14px !important; right: 14px !important; bottom: 5px !important; }
 .cesium-credit-textContainer, .cesium-credit-logoContainer { font-size: 9px !important; }
 .cesium-widget-credits { text-shadow: 0 1px 4px #000; }
 .cesium-viewer-toolbar, .cesium-viewer-animationContainer, .cesium-viewer-timelineContainer, .cesium-viewer-fullscreenContainer { display: none !important; }
-@media (max-width: 600px) { .top-hud { top: 18px; left: 18px; right: 18px; } .bottom-hud { left: 18px; right: 18px; } .conditions { max-width: 66%; } .rotate-hint { display: none; } .wind { padding-right: 8px; } .wind svg { width: 43px; } }
+@media (max-width: 600px) { .top-hud { top: 18px; left: 18px; right: 18px; } .bottom-hud { left: 18px; right: 18px; } .conditions { max-width: 66%; } .rotate-hint { display: none; } }
 @media (max-height: 500px) { #setup-message { top: 115px; width: auto; max-width: calc(100% - 36px); padding: 10px 14px; } #setup-message .notice-icon, #setup-message p { display: none; } }
 @media (prefers-reduced-transparency: reduce) { .glass { background: #1c2b38; backdrop-filter: none; } }

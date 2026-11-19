@@ -32,19 +32,13 @@
       <div class="eyebrow" id="weather-kind">WEATHER</div>
       <div id="weather-summary">Loading conditions…</div>
       <div class="secondary" id="weather-detail"></div>
+      <div class="secondary" id="wind-line" hidden></div>
       <div id="snow-label" class="secondary" hidden>Illustrative white surfaces</div>
       <div class="weather-actions">
         <details id="weather-provenance"><summary>Data details</summary><div id="weather-source-detail"></div></details>
         <button id="refresh-weather" type="button" title="Retry or refresh weather data">Refresh</button>
       </div>
       <a id="weather-attribution" href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer" hidden>Weather data by Open-Meteo</a>
-    </div>
-    <div class="glass wind" id="wind-indicator" hidden>
-      <svg viewBox="0 0 70 42" width="65" height="39" aria-hidden="true">
-        <path d="M12 39V5" stroke="#c8d2dc" stroke-width="2"/>
-        <g id="windsock"><path d="M13 7 L59 16 L59 23 L13 26 Z" fill="#ecaa72"/><path d="M23 9L23 24M36 12L36 24M49 15L49 23" stroke="#f6ece0" stroke-width="6"/></g>
-      </svg>
-      <div><span id="wind-speed"></span><small id="wind-direction"></small></div>
     </div>
   </div>
   <div class="footnote"><span id="geometry-status">Preparing scene</span><span class="rotate-hint" id="rotate-hint">Drag to look · ↑ ↓ ← →</span></div>

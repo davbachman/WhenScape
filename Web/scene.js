@@ -1,6 +1,7 @@
 import { calculateAstronomy, clamp, compassName } from './astronomy.js';
 import { WeatherController } from './weather.js';
 import { createCloudStage } from './clouds.js';
+import { flagExtension, flagShape, flagShadow, shadowOffset } from './flag.js';
 
 const C = window.Cesium;
 const $ = id => document.getElementById(id);
@@ -13,6 +14,7 @@ let heading = 0, pitch = 0.025, eyeHeight = 1.7;
 // air and only holds up from above: the camera orbits the pin, looking down.
 const droneLimits = { minPitch: -80 * Math.PI / 180, maxPitch: -6 * Math.PI / 180, minRange: 60, maxRange: 2500 };
 let dronePitch = -20 * Math.PI / 180, droneRange = 175;
+let flag, flagTimer, lastFlagRender = 0;
 let geometryGeneration = 0, positionGeneration = 0, weatherGeneration = 0;
 let activeToken, terrainAvailable = false, geometryMessage = 'Geographic data unavailable';
 let weather = { kind: 'missing', label: 'Weather unavailable', detail: 'Choose a place and time.', renderPrecipitation: false };
@@ -90,6 +92,7 @@ function createViewer() {
   viewer.scene.highDynamicRange = true;
   cloudStage = viewer.scene.postProcessStages.add(createCloudStage(C, viewer.scene));
   prepareStarTextures();
+  flag = createFlag();
   viewer.scene.renderError.addEventListener((_scene, error) => failScene(error));
   const handler = viewer.screenSpaceEventHandler;
   handler.removeInputAction(C.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
@@ -188,6 +191,7 @@ function updateViewLabels() {
   $('scene').setAttribute('aria-label', photoreal
     ? 'Aerial view of the selected place. Drag or use arrow keys to orbit and tilt. Scroll or use plus and minus to zoom.'
     : 'Ground-level scene. Drag to look around. Arrow keys rotate the view.');
+  updateFlag();
 }
 
 function setCamera() {
@@ -206,9 +210,77 @@ function setCamera() {
   const degrees = normalizeHeading();
   $('heading').textContent = `${compassName(degrees)} · ${Math.round(degrees)}°`;
   $('compass-needle').style.transform = `rotate(${-degrees}deg)`;
+  // The flag is sized to the view, so zooming changes it; wait for the gesture to settle.
+  clearTimeout(flagTimer);
+  flagTimer = setTimeout(updateFlag, 120);
   viewer.scene.requestRender();
   drawEffects(0);
   postStatus();
+}
+
+// The pin as a local frame: metres east, north and up from the ground point.
+function pinFrame() {
+  const ground = eyeHeight - 1.7;
+  const frame = C.Transforms.eastNorthUpToFixedFrame(C.Cartesian3.fromDegrees(state.longitude, state.latitude, ground));
+  return { ground, at: (e, n, up = 0) => C.Matrix4.multiplyByPoint(frame, new C.Cartesian3(e, n, up), new C.Cartesian3()) };
+}
+
+function flagHeight() { return clamp(droneRange * 0.12, 8, 140); }
+function flagWind() {
+  const known = state?.weatherEnabled && weather.kind !== 'missing';
+  return { windSpeed: known ? weather.windSpeed : null, windFrom: known ? weather.windDirection : null };
+}
+
+// A flag at the pin for the aerial view: it marks the exact point, streams
+// downwind, and its drawn shadow shows where the Sun is. The mesh cannot
+// receive computed shadows, so the shadow is laid on it as a ground overlay.
+function createFlag() {
+  const cloth = () => {
+    const { ground, at } = pinFrame();
+    const { windSpeed, windFrom } = flagWind();
+    const phase = weatherClock * (2 + (windSpeed ?? 0) * 0.3);
+    const shape = flagShape({ height: flagHeight(), windSpeed, windFrom, phase });
+    return { positions: shape.map(p => at(p.e, p.n)), tops: shape.map(p => ground + p.top), bottoms: shape.map(p => ground + p.bottom) };
+  };
+  const shade = C.Color.BLACK.withAlpha(0.4);
+  const onMesh = C.ClassificationType.CESIUM_3D_TILE;
+  return {
+    pole: viewer.entities.add({ show: false, polyline: { width: 3, material: C.Color.fromCssColorString('#f3f0e8') } }),
+    cloth: viewer.entities.add({ show: false, wall: {
+      positions: new C.CallbackProperty(() => state ? cloth().positions : [], false),
+      maximumHeights: new C.CallbackProperty(() => state ? cloth().tops : [], false),
+      minimumHeights: new C.CallbackProperty(() => state ? cloth().bottoms : [], false),
+      material: C.Color.fromCssColorString('#e8552d'), shadows: C.ShadowMode.DISABLED } }),
+    poleShadow: viewer.entities.add({ show: false, polyline: { width: 3, clampToGround: true, classificationType: onMesh, material: shade } }),
+    clothShadow: viewer.entities.add({ show: false, polygon: { classificationType: onMesh, material: shade } }),
+  };
+}
+
+function updateFlag() {
+  if (!flag || !state || !viewer) return;
+  const shown = photoreal;
+  flag.pole.show = flag.cloth.show = shown;
+  // Direct sunlight strong enough to cast a visible shadow.
+  const enabled = state.weatherEnabled && weather.kind !== 'missing';
+  const clouds = enabled ? clamp((weather.cloudCover ?? 0) / 100, 0, 1) : 0;
+  const sun = astronomy?.sun;
+  const shadowed = shown && sun && sun.altitude > 1.5 && clouds < 0.85;
+  flag.poleShadow.show = flag.clothShadow.show = !!shadowed;
+  if (shown) {
+    const { at } = pinFrame();
+    const height = flagHeight();
+    flag.pole.polyline.positions = [at(0, 0, 0), at(0, 0, height)];
+    if (shadowed) {
+      const tip = shadowOffset(height, sun.altitude, sun.azimuth);
+      const shade = C.Color.BLACK.withAlpha(0.45 * Math.pow(1 - clouds, 1.5));
+      flag.poleShadow.polyline.positions = [at(0, 0), at(tip.e, tip.n)];
+      flag.poleShadow.polyline.material = shade;
+      flag.clothShadow.polygon.hierarchy = new C.PolygonHierarchy(
+        flagShadow({ height, ...flagWind(), sunAltitude: sun.altitude, sunAzimuth: sun.azimuth }).map(p => at(p.e, p.n)));
+      flag.clothShadow.polygon.material = shade;
+    }
+  }
+  viewer.scene.requestRender();
 }
 
 async function placeObserver() {
@@ -448,6 +520,7 @@ function updateLightAndWeather() {
     : 'Snow cover from an available depth estimate';
   updateBuildingStyle();
   updateWeatherHUD();
+  updateFlag();
   viewer.scene.requestRender();
   drawEffects(0);
   scheduleEffects();
@@ -488,11 +561,12 @@ function updateWeatherHUD() {
       ? 'Seasonal averages · representative light, not a prediction. Falling precipitation is not inferred from averages.'
       : `${sunLabel}. ${weather.kind === 'historical' ? 'Historical grid estimate.' : 'Forecast conditions.'} Effects are illustrative.`;
   }
-  $('wind-indicator').hidden = !state.weatherEnabled || weather.windSpeed == null;
-  if (weather.windSpeed != null) {
-    $('wind-speed').textContent = `${weather.windSpeed.toFixed(1)} m/s`;
-    $('wind-direction').textContent = weather.windDirection == null ? 'Wind direction unknown'
-      : `From ${compassName(weather.windDirection)} ${Math.round(weather.windDirection)}°`;
+  const windKnown = state.weatherEnabled && weather.windSpeed != null;
+  $('wind-line').hidden = !windKnown;
+  if (windKnown) {
+    $('wind-line').textContent = weather.windSpeed <= 0.25 ? 'Calm'
+      : weather.windDirection == null ? `Wind ${weather.windSpeed.toFixed(1)} m/s · direction unknown`
+      : `Wind from ${compassName(weather.windDirection)} ${Math.round(weather.windDirection)}° · ${weather.windSpeed.toFixed(1)} m/s`;
   }
 }
 
@@ -593,9 +667,12 @@ function drawEffects(delta) {
     }
     ctx.globalAlpha = 1;
   }
-  const sockAngle = state.reducedMotion ? 0 : Math.sin(weatherClock * 4) * Math.min(4, wind);
-  $('windsock').style.transformOrigin = '13px 16px';
-  $('windsock').style.transform = `rotate(${sockAngle}deg)`;
+  // Keep the flag waving. The 3D scene otherwise renders only on demand, so
+  // ask for a frame about twenty times a second while there is wind to show.
+  if (photoreal && delta > 0 && !state.reducedMotion && flagExtension(wind, weather.windDirection) > 0) {
+    const now = performance.now();
+    if (now - lastFlagRender > 50) { lastFlagRender = now; viewer.scene.requestRender(); }
+  }
 }
 
 function hash(seed) { const value = Math.sin(seed * 127.1) * 43758.5453; return value - Math.floor(value); }
