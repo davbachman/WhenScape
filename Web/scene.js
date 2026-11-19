@@ -286,6 +286,7 @@ function updateFlag() {
     }
   }
   updateGuides();
+  updateMeshShader();
   viewer.scene.requestRender();
 }
 
@@ -530,12 +531,59 @@ function updateBuildingStyle() {
     // normals, so it cannot be lit. Multiply it by the current light instead.
     if (!tintShader) tintShader = new C.CustomShader({
       lightingModel: C.LightingModel.UNLIT,
-      uniforms: { u_light: { type: C.UniformType.VEC3, value: new C.Cartesian3(1, 1, 1) } },
-      fragmentShaderText: `void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material) {
-        material.diffuse *= u_light;
+      uniforms: {
+        u_light: { type: C.UniformType.VEC3, value: new C.Cartesian3(1, 1, 1) },
+        u_hazeColor: { type: C.UniformType.VEC3, value: new C.Cartesian3(0.7, 0.8, 0.9) },
+        u_hazeDensity: { type: C.UniformType.FLOAT, value: 0 },
+        u_pin: { type: C.UniformType.VEC3, value: new C.Cartesian3() },
+        u_east: { type: C.UniformType.VEC3, value: new C.Cartesian3(1, 0, 0) },
+        u_north: { type: C.UniformType.VEC3, value: new C.Cartesian3(0, 1, 0) },
+        u_cloudOffset: { type: C.UniformType.VEC2, value: new C.Cartesian2() },
+        u_cloudCover: { type: C.UniformType.FLOAT, value: 0 },
+        u_cloudShadow: { type: C.UniformType.FLOAT, value: 0 },
+        u_wet: { type: C.UniformType.FLOAT, value: 0 },
+        u_snow: { type: C.UniformType.FLOAT, value: 0 },
+        u_glow: { type: C.UniformType.FLOAT, value: 0 },
+      },
+      // The cloud pattern repeats the sky stage's, laid over the ground at the
+      // cloud layer's scale, so shadows drift with the clouds overhead.
+      fragmentShaderText: `
+      float groundHash(vec2 cell) { return fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453); }
+      float groundNoise(vec2 position) {
+        vec2 cell = floor(position);
+        vec2 part = fract(position);
+        part = part * part * (3.0 - 2.0 * part);
+        return mix(mix(groundHash(cell), groundHash(cell + vec2(1.0, 0.0)), part.x),
+          mix(groundHash(cell + vec2(0.0, 1.0)), groundHash(cell + vec2(1.0, 1.0)), part.x), part.y);
+      }
+      float groundLayers(vec2 position) {
+        float total = 0.0;
+        float weight = 0.5;
+        for (int i = 0; i < 5; ++i) {
+          total += weight * groundNoise(position);
+          position = position * 2.03 + vec2(17.0, 9.0);
+          weight *= 0.5;
+        }
+        return total;
+      }
+      void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material) {
+        vec3 photo = material.diffuse;
+        float brightness = dot(photo, vec3(0.299, 0.587, 0.114));
+        vec3 color = mix(photo, vec3(0.92, 0.94, 0.97), u_snow);
+        color *= 1.0 - 0.28 * u_wet;
+        vec3 offset = fsInput.attributes.positionWC - u_pin;
+        vec2 ground = vec2(dot(offset, u_east), dot(offset, u_north)) / 1500.0 + u_cloudOffset;
+        float threshold = mix(0.72, 0.18, u_cloudCover);
+        float shadow = smoothstep(threshold, threshold + 0.15, groundLayers(ground)) * smoothstep(0.02, 0.12, u_cloudCover);
+        color *= 1.0 - u_cloudShadow * shadow;
+        color *= u_light;
+        // After dark, pale surfaces pick up a warm tone, as if lit by lamps.
+        color += u_glow * vec3(1.0, 0.78, 0.5) * smoothstep(0.35, 0.8, brightness) * photo;
+        float distance = length(fsInput.attributes.positionEC);
+        material.diffuse = mix(color, u_hazeColor, 1.0 - exp(-distance * u_hazeDensity));
       }`,
     });
-    tintShader.setUniform('u_light', meshLight());
+    updateMeshShader();
     buildings.customShader = tintShader;
     return;
   }
@@ -572,6 +620,54 @@ function meshLight() {
   return new C.Cartesian3(mix(0.03, 1, 1.0), mix(0.04, 1, 0.76), mix(0.075, 1, 0.56));
 }
 
+// Approximate colour of the sky at the horizon, matching the painted sky,
+// used to fade distant ground into it.
+function horizonColor() {
+  const sunHeight = Math.sin((astronomy?.sun.altitude ?? 45) * Math.PI / 180);
+  const step = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+  const day = step(-0.10, 0.12, sunHeight);
+  const twilight = step(-0.28, -0.03, sunHeight) * (1 - step(0.02, 0.32, sunHeight));
+  const enabled = state?.weatherEnabled && weather.kind !== 'missing';
+  const overcast = step(0.55, 1, enabled ? (weather.cloudCover ?? 0) / 100 : 0);
+  const blend = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+  let color = blend([0.03, 0.045, 0.08], [0.66, 0.80, 0.93], day);
+  color = blend(color, [0.80, 0.52, 0.42], twilight);
+  color = blend(color, blend([0.045, 0.055, 0.075], [0.60, 0.64, 0.69], day), overcast * 0.85);
+  return new C.Cartesian3(...color);
+}
+
+// Everything the mesh's look depends on: light, haze, cloud shadows, wet or
+// snowy ground and the night tone. All of it is illustrative.
+function updateMeshShader() {
+  if (!tintShader || !state) return;
+  const enabled = state.weatherEnabled && weather.kind !== 'missing';
+  const clouds = enabled ? clamp((weather.cloudCover ?? 0) / 100, 0, 1) : 0;
+  const sun = astronomy?.sun, moon = astronomy?.moon;
+  const daylight = clamp(((sun?.altitude ?? 45) + 8) / 20, 0, 1);
+  const light = meshLight();
+  // Moonlight lifts the night a little, more for a fuller, higher Moon.
+  const moonlight = moon && moon.altitude > 0 ? clamp(Math.sin(moon.altitude * Math.PI / 180) * 2.5, 0, 1) *
+    (astronomy.moonIlluminatedFraction ?? 0) * (1 - daylight) * (1 - clouds * 0.8) : 0;
+  light.x += 0.05 * moonlight; light.y += 0.065 * moonlight; light.z += 0.10 * moonlight;
+  tintShader.setUniform('u_light', light);
+  tintShader.setUniform('u_hazeColor', horizonColor());
+  const visibility = enabled && weather.visibility > 0 ? weather.visibility : null;
+  tintShader.setUniform('u_hazeDensity', clamp(visibility ? 2.5 / visibility : 1 / 18000, 1 / 18000, 1 / 60));
+  const { at } = pinFrame();
+  const pin = at(0, 0), east = at(1, 0), north = at(0, 1);
+  tintShader.setUniform('u_pin', pin);
+  tintShader.setUniform('u_east', C.Cartesian3.subtract(east, pin, new C.Cartesian3()));
+  tintShader.setUniform('u_north', C.Cartesian3.subtract(north, pin, new C.Cartesian3()));
+  tintShader.setUniform('u_cloudCover', clouds);
+  const direct = sun && sun.altitude > 2 ? Math.pow(1 - clamp((clouds - 0.55) / 0.45, 0, 1), 1.5) : 0;
+  tintShader.setUniform('u_cloudShadow', 0.38 * direct);
+  const raining = enabled && weather.renderPrecipitation ? clamp(((weather.rain ?? 0) + (weather.precipitation ?? 0)) / 3, 0, 1) : 0;
+  tintShader.setUniform('u_wet', raining);
+  const depth = state.snowCover ? 0.05 : enabled ? (weather.snowDepth ?? 0) : 0;
+  tintShader.setUniform('u_snow', clamp(depth / 0.05, 0, 1) * 0.7);
+  tintShader.setUniform('u_glow', (1 - daylight) * 0.16);
+}
+
 function updateLightAndWeather() {
   if (!viewer || !astronomy) return;
   const enabled = state.weatherEnabled && weather.kind !== 'missing';
@@ -593,8 +689,7 @@ function updateLightAndWeather() {
   viewer.scene.skyAtmosphere.brightnessShift = -clouds * 0.22;
   const visibility = enabled ? weather.visibility : null;
   viewer.scene.fog.density = visibility > 0 ? clamp(1 / visibility, 0.00005, 0.004) : 0.00008;
-  // The photographic mesh cannot be whitened by surface direction.
-  const white = !photoreal && (state.snowCover || (enabled && (weather.snowDepth ?? 0) > 0));
+  const white = state.snowCover || (enabled && (weather.snowDepth ?? 0) > 0);
   viewer.scene.globe.baseColor = C.Color.fromCssColorString(white ? '#cdd4d4' : '#65735d');
   $('snow-label').hidden = !white;
   $('snow-label').textContent = state.snowCover ? 'Illustrative white surfaces · no depth simulation'
@@ -731,9 +826,39 @@ function drawEffects(delta) {
     const rain = weather.rain ?? 0;
     const count = Math.min(state.detail === 'low' ? 90 : 240, Math.ceil(snow * 65 + rain * 24));
     const snowFraction = snow + rain > 0 ? snow / (snow + rain) : 0;
+    // In the aerial view, drops move the way falling rain would look from this
+    // camera: project one second of fall and wind drift at the pin onto the screen.
+    const fallOnScreen = isSnow => {
+      if (!photoreal) return null;
+      const { at } = pinFrame();
+      const blown = ((weather.windDirection ?? 0) + 180) * Math.PI / 180, carry = wind * (isSnow ? 0.7 : 0.35);
+      const down = isSnow ? 1.4 : 9, above = flagHeight();
+      const from = viewer.scene.cartesianToCanvasCoordinates(at(0, 0, above));
+      const to = viewer.scene.cartesianToCanvasCoordinates(at(Math.sin(blown) * carry, Math.cos(blown) * carry, above - down));
+      if (!from || !to) return null;
+      return { x: to.x - from.x, y: to.y - from.y };
+    };
+    const projected = { rain: fallOnScreen(false), snow: fallOnScreen(true) };
     for (let i = 0; i < count; i++) {
       const seed = hash(i + 11), isSnow = hash(i + 700) < snowFraction;
       const depth = 0.3 + hash(i + 200) * 0.7;
+      const fall = isSnow ? projected.snow : projected.rain;
+      if (fall) {
+        // Nearer drops cross the screen faster and look larger.
+        const near = 1 + depth * 5;
+        const x = mod(seed * width + weatherClock * fall.x * near, width + 40) - 20;
+        const y = mod(hash(i + 400) * height + weatherClock * fall.y * near, height + 45) - 20;
+        ctx.globalAlpha = (0.25 + depth * 0.6) * (0.35 + daylight * 0.65);
+        if (isSnow) {
+          ctx.fillStyle = '#edf4fa'; ctx.beginPath();
+          ctx.arc(x + Math.sin(weatherClock * 1.5 + i) * 5, y, 0.8 + depth * 2.2, 0, Math.PI * 2); ctx.fill();
+        } else {
+          const length = Math.max(Math.hypot(fall.x, fall.y), 1), streak = 6 + depth * 16;
+          ctx.strokeStyle = '#b9d0e5'; ctx.lineWidth = 0.5 + depth * 0.7;
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + fall.x / length * streak, y + fall.y / length * streak); ctx.stroke();
+        }
+        continue;
+      }
       const speed = isSnow ? 25 + depth * 55 : 350 + depth * 550;
       const x = mod(seed * width + weatherClock * drift * 9 * depth - heading * width * depth, width + 40) - 20;
       const y = mod(hash(i + 400) * height + weatherClock * speed + (photoreal ? dronePitch : pitch) * height * depth, height + 45) - 20;
@@ -757,6 +882,7 @@ function drawEffects(delta) {
     cloudDrift.x -= Math.sin(toward) * speed * delta * 0.0016;
     cloudDrift.y -= Math.cos(toward) * speed * delta * 0.0016;
     cloudStage.uniforms.cloudOffset = new C.Cartesian2(cloudDrift.x, cloudDrift.y);
+    if (photoreal && tintShader) tintShader.setUniform('u_cloudOffset', new C.Cartesian2(cloudDrift.x, cloudDrift.y));
     const now = performance.now();
     if ((weather.cloudCover ?? 0) > 5 && now - lastSkyRender > 120) { lastSkyRender = now; viewer.scene.requestRender(); }
   }
