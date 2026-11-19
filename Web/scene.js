@@ -468,7 +468,12 @@ async function loadGeography(token) {
     // Requested directly rather than through Cesium's helper, which remembers a
     // failed request and would keep failing after the token is corrected.
     mesh = await C.Cesium3DTileset.fromUrl(await C.IonResource.fromAssetId(2275207), {
-      maximumScreenSpaceError: detailError(), showCreditsOnScreen: true, enableCollision: true,
+      maximumScreenSpaceError: detailError(), showCreditsOnScreen: true,
+      // No camera collision: Cesium lifted the camera to a surface height it
+      // found under it, which moved it off the orbit by tens of metres and
+      // sometimes left the view under the mesh.
+      // The orbit's minimum height keeps the camera clear instead.
+      enableCollision: false,
       // The aerial view sees to the horizon; load distant tiles more coarsely.
       dynamicScreenSpaceError: true,
       // Capture-time shadows are baked into the textures, so computed ones
