@@ -388,19 +388,21 @@ async function placeObserver() {
   if (photoreal) {
     try {
       // The mesh is the ground here, so sample it instead of a terrain provider.
-      // Sample the pin and a ring of points a few metres around it, and take
-      // the lowest: the mesh is a surface, so a pin under a tree or at a roof
-      // edge would otherwise put the ground at canopy or roof height. The
-      // flag and guides are excluded so they are never mistaken for ground.
+      // Sample the pin and a ring of points a few metres around it and use a
+      // low one: the mesh is a surface, so a pin under a tree or at a roof
+      // edge would otherwise put the ground at canopy or roof height, and the
+      // flag itself stands on the pin and can be hit instead of the ground.
+      // Nothing is excluded from the sampling, and a reading far below the
+      // rest is ignored, so one stray value cannot sink the view underground.
       const metres = 1 / 111_320, across = Math.cos(latitude * Math.PI / 180);
       const around = [[0, 0], ...Array.from({ length: 8 }, (_, i) => [Math.sin(i * Math.PI / 4) * 5, Math.cos(i * Math.PI / 4) * 5])];
       const points = around.map(([east, north]) => C.Cartographic.fromDegrees(longitude + east * metres / across, latitude + north * metres));
-      const overlays = [...Object.values(flag ?? {}), ...(guides?.entities.values ?? [])];
-      const sampled = await viewer.scene.sampleHeightMostDetailed(points, overlays);
+      const sampled = await viewer.scene.sampleHeightMostDetailed(points);
       if (generation !== positionGeneration) return;
-      const heights = sampled.map(p => p?.height).filter(Number.isFinite);
+      const heights = sampled.map(p => p?.height).filter(Number.isFinite).sort((x, y) => x - y);
       if (!heights.length) throw new Error('No mesh height');
-      eyeHeight = Math.min(...heights) + 1.7;
+      const typical = heights[Math.floor(heights.length / 2)];
+      eyeHeight = heights.find(h => h > typical - 12) + 1.7;
       setCamera();
     } catch {
       if (generation !== positionGeneration) return;
