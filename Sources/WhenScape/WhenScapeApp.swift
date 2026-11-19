@@ -286,6 +286,8 @@ struct SettingsView: View {
                 Toggle("Reduce motion", isOn: $model.reducedMotion)
                 Toggle("Illustrative white surfaces", isOn: $model.snowCover)
                 Text("White surfaces are an illustration, not a prediction of accumulated snow. No snow depth or puddles are simulated.").font(.caption).foregroundStyle(.secondary)
+                Toggle("Computed shadows on the 3D mesh", isOn: $model.computedShadows)
+                Text("The photorealistic mesh already shows the shadows from when it was photographed, and they cannot be removed. This adds shadows that follow the calculated Sun, so both sets appear. It also costs some performance.").font(.caption).foregroundStyle(.secondary)
             }
             Section("Data & privacy") {
                 Text("Calendar access is read-only within WhenScape. Event titles, notes and attendees stay on your Mac. Place searches go to Apple; coordinates and requested times go to map and weather providers.")

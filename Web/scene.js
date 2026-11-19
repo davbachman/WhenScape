@@ -15,7 +15,9 @@ let photoreal = false;
 let heading = 0, pitch = 0.025, eyeHeight = 1.7;
 // Aerial view used with the photorealistic mesh, which is captured from the
 // air and only holds up from above: the camera orbits the pin, looking down.
-const droneLimits = { minPitch: -80 * Math.PI / 180, maxPitch: -6 * Math.PI / 180, minRange: 60, maxRange: 2500 };
+// minHeight keeps the camera above the treetops: closer to the ground the
+// mesh's trees and walls break into floating shards.
+const droneLimits = { minPitch: -80 * Math.PI / 180, maxPitch: -6 * Math.PI / 180, minRange: 60, maxRange: 2500, minHeight: 40 };
 let dronePitch = -20 * Math.PI / 180, droneRange = 175;
 let flag, flagTimer, lastFlagRender = 0, lastSkyRender = 0;
 let guides, guidesKey, sunMarker, track, trackKey;
@@ -208,6 +210,9 @@ function setCamera() {
   if (photoreal) {
     // Orbit the pin at ground level; `heading` stays the direction the camera faces.
     const pin = C.Cartesian3.fromDegrees(state.longitude, state.latitude, eyeHeight - 1.7);
+    // A shallow tilt at a short range would put the camera among the trees, so
+    // zooming in steepens the view enough to stay minHeight above the pin.
+    dronePitch = Math.min(dronePitch, -Math.asin(Math.min(1, droneLimits.minHeight / droneRange)));
     viewer.camera.lookAt(pin, new C.HeadingPitchRange(heading, dronePitch, droneRange));
     viewer.camera.lookAtTransform(C.Matrix4.IDENTITY);
   } else {
@@ -466,8 +471,9 @@ async function loadGeography(token) {
       maximumScreenSpaceError: detailError(), showCreditsOnScreen: true, enableCollision: true,
       // The aerial view sees to the horizon; load distant tiles more coarsely.
       dynamicScreenSpaceError: true,
-      // Capture-time shadows are baked into the textures; casting more would double them.
-      shadows: C.ShadowMode.DISABLED });
+      // Capture-time shadows are baked into the textures, so computed ones
+      // would double them; they are added only when the setting asks.
+      shadows: meshShadowMode() });
   } catch (error) {
     mesh = undefined;
     meshProblem = describeIonError(error);
@@ -552,6 +558,10 @@ function describeIonError(error) {
   if (status) return `request failed (${status})`;
   return 'no response; check the network connection';
 }
+
+// The mesh both casts and receives computed shadows when they are on: with
+// the globe hidden, the mesh is the only surface they can fall on.
+function meshShadowMode() { return state?.computedShadows ? C.ShadowMode.ENABLED : C.ShadowMode.DISABLED; }
 
 function detailError() { return state?.detail === 'high' ? 8 : state?.detail === 'low' ? 32 : 16; }
 
@@ -996,7 +1006,7 @@ function update(next) {
       || Math.abs(next.latitude) > 90 || Math.abs(next.longitude) > 180
       || !Number.isFinite(new Date(next.time).getTime())) return;
   const previous = state;
-  state = { weatherEnabled: true, snowCover: false, reducedMotion: false, detail: 'balanced', ionToken: '', ...next };
+  state = { weatherEnabled: true, snowCover: false, reducedMotion: false, computedShadows: false, detail: 'balanced', ionToken: '', ...next };
   state.time = new Date(state.time).toISOString();
   // Without a valid interval, use the 24 hours around the selected instant.
   const instant = Date.parse(state.time), from = Date.parse(state.start), until = Date.parse(state.end);
@@ -1023,6 +1033,7 @@ function update(next) {
     if (buildings) buildings.maximumScreenSpaceError = detailError();
     viewer.scene.shadowMap.size = state.detail === 'low' ? 1024 : 2048;
   }
+  if (photoreal && buildings && previous?.computedShadows !== state.computedShadows) buildings.shadows = meshShadowMode();
   if (activeToken !== state.ionToken) {
     activeToken = state.ionToken;
     loadGeography(activeToken).catch(error => {

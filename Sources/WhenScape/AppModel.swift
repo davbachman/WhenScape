@@ -27,6 +27,7 @@ final class AppModel: ObservableObject {
     @Published var weatherEnabled = true
     @Published var snowCover = false
     @Published var reducedMotion = false
+    @Published var computedShadows = false
     @Published var detail = "balanced"
     @Published var ionToken = TokenStore.read()
     @Published var sceneMessage = "Preparing the scene…"
@@ -168,7 +169,7 @@ final class AppModel: ObservableObject {
                 "time": formatter.string(from: instant), "start": formatter.string(from: interval.start),
                 "end": formatter.string(from: interval.end), "rangeEnabled": rangeEnabled,
                 "timeZone": timeZone.identifier, "weatherEnabled": weatherEnabled,
-                "snowCover": snowCover, "reducedMotion": reducedMotion, "detail": detail, "ionToken": ionToken]
+                "snowCover": snowCover, "reducedMotion": reducedMotion, "computedShadows": computedShadows, "detail": detail, "ionToken": ionToken]
     }
     func receiveSceneStatus(_ status: [String: Any]) {
         if let ready = status["ready"] as? Bool { sceneReady = ready }
