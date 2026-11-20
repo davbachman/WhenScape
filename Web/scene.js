@@ -374,9 +374,10 @@ function flyToPin(from) {
   });
 }
 
-// When the aerial view is left alone for a while, it slowly circles the pin.
-// It runs only while the app is in front and its window can be seen, at a
-// capped frame rate, and stops at the first touch.
+// When the aerial view is left alone for a while, it slowly circles the pin;
+// switching the turntable on starts it at once. It runs only while the app is
+// in front and its window can be seen, at a capped frame rate, and stops at
+// the first touch.
 const IDLE_ORBIT_AFTER = 30_000, IDLE_ORBIT_RATE = 2 * Math.PI / 180;
 let lastInteraction = performance.now(), orbitFrame, orbitLast = 0;
 function noteInteraction() {
@@ -1220,6 +1221,11 @@ function update(next) {
   updateLightAndWeather();
   queueWeather();
   queueSeries();
+  // Switching the turntable on starts it now; the idle wait applies only after a touch.
+  if (previous?.idleOrbit === false && state.idleOrbit !== false) {
+    lastInteraction = performance.now() - IDLE_ORBIT_AFTER;
+    checkIdleOrbit();
+  }
   viewer.scene.requestRender();
   postStatus();
 }
