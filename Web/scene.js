@@ -20,7 +20,7 @@ let heading = 0, pitch = 0.025, eyeHeight = 1.7;
 const droneLimits = { minPitch: -80 * Math.PI / 180, maxPitch: -6 * Math.PI / 180, minRange: 60, maxRange: 2500, minHeight: 40 };
 let dronePitch = -20 * Math.PI / 180, droneRange = 175;
 let flag, flagTimer, lastFlagRender = 0, lastSkyRender = 0;
-let guides, guidesKey, sunMarker, track, trackKey;
+let guides, guideLines, guidesKey, sunMarker, track, trackKey;
 let series = [], seriesKey, seriesAbort, moonTimes, moonKey, timelineEvents = {};
 const units = unitsFor(globalThis.navigator?.language ?? 'en-US');
 const cloudDrift = { x: 0, y: 0 };
@@ -104,6 +104,7 @@ function createViewer() {
   flag = createFlag();
   guides = new C.CustomDataSource('guides');
   viewer.dataSources.add(guides);
+  guideLines = viewer.scene.primitives.add(new C.PrimitiveCollection());
   viewer.scene.renderError.addEventListener((_scene, error) => failScene(error));
   const handler = viewer.screenSpaceEventHandler;
   handler.removeInputAction(C.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
@@ -250,7 +251,11 @@ function pinFrame() {
   return { ground, at: (e, n, up = 0) => C.Matrix4.multiplyByPoint(frame, new C.Cartesian3(e, n, up), new C.Cartesian3()) };
 }
 
-function flagHeight() { return clamp(droneRange * 0.12, 8, 140); }
+// The flag is sized to the zoom so it stays readable. The size is fixed when
+// updateFlag runs, after a zoom settles, so the cloth (redrawn every frame)
+// never grows apart from the pole, shadow and guides, which update with it.
+let flagSize = 8;
+function flagHeight() { return flagSize; }
 function flagWind() {
   const known = state?.weatherEnabled && weather.kind !== 'missing';
   return { windSpeed: known ? weather.windSpeed : null, windFrom: known ? weather.windDirection : null };
@@ -274,7 +279,9 @@ function createFlag() {
   const shade = C.Color.BLACK.withAlpha(0.4);
   const onMesh = C.ClassificationType.CESIUM_3D_TILE;
   return {
-    pole: viewer.entities.add({ show: false, polyline: { width: 3, material: C.Color.fromCssColorString('#f3f0e8') } }),
+    // Recomputed every frame, like the cloth, so a resize never leaves a gap.
+    pole: viewer.entities.add({ show: false, polyline: { width: 3, material: C.Color.fromCssColorString('#f3f0e8'),
+      positions: new C.CallbackProperty(() => { if (!state) return []; const { at } = pinFrame(); return [at(0, 0, 0), at(0, 0, flagHeight())]; }, false) } }),
     cloth: viewer.entities.add({ show: false, wall: {
       positions: new C.CallbackProperty(() => state ? cloth().positions : [], false),
       maximumHeights: new C.CallbackProperty(() => state ? cloth().tops : [], false),
@@ -287,6 +294,7 @@ function createFlag() {
 
 function updateFlag() {
   if (!flag || !state || !viewer) return;
+  flagSize = clamp(droneRange * 0.12, 8, 140);
   const shown = photoreal;
   flag.pole.show = flag.cloth.show = shown;
   // Direct sunlight strong enough to cast a visible shadow.
@@ -300,7 +308,6 @@ function updateFlag() {
   if (shown) {
     const { at } = pinFrame();
     const height = flagHeight();
-    flag.pole.polyline.positions = [at(0, 0, 0), at(0, 0, height)];
     if (shadowed) {
       const tip = shadowOffset(height, sun.altitude, sun.azimuth);
       const shade = C.Color.BLACK.withAlpha((moonlit ? 0.3 * astronomy.moonIlluminatedFraction : 0.45) * Math.pow(1 - clouds, 1.5));
@@ -338,7 +345,7 @@ function ensureTrack() {
 // that time, so sunrise and sunset meet the ring at their compass bearings.
 function updateGuides() {
   if (!guides) return;
-  guides.show = photoreal;
+  guides.show = guideLines.show = photoreal;
   if (!photoreal || !state) return;
   const { at } = pinFrame();
   const radius = flagHeight() * 2.2;
@@ -355,11 +362,11 @@ function updateGuides() {
   if (layout !== guidesKey) {
     guidesKey = layout;
     guides.entities.removeAll();
+    guideLines.removeAll();
     // A level circle just above the pin's ground height. Draping it over the
     // mesh breaks it up across roofs and trees; where it passes behind them
     // it is drawn faintly instead.
-    guides.entities.add({ polyline: { positions: ringPoints(radius).map(p => at(p.e, p.n, 1.5)), width: 2,
-      material: C.Color.WHITE.withAlpha(0.8), depthFailMaterial: C.Color.WHITE.withAlpha(0.28) } });
+    guideLines.add(guideLine(ringPoints(radius).map(p => at(p.e, p.n, 1.5)), 2, C.Color.WHITE.withAlpha(0.8), C.Color.WHITE.withAlpha(0.28)));
     for (const [name, bearing] of [['N', 0], ['E', 90], ['S', 180], ['W', 270]]) {
       const p = domePoint(0, bearing, radius * 1.1);
       guides.entities.add({ position: at(p.e, p.n, 1.5), label: { ...label(name, name === 'N' ? C.Color.fromCssColorString('#ffb27a') : C.Color.WHITE, 15),
@@ -367,13 +374,12 @@ function updateGuides() {
     }
     for (const run of daylightRuns(track.samples)) {
       const ends = [track.sunrise, ...run, track.sunset].filter(Boolean).sort((a, b) => a.time - b.time);
-      guides.entities.add({ polyline: { positions: ends.map(dome), width: 2, material: ink.withAlpha(0.9),
-        depthFailMaterial: ink.withAlpha(0.3) } });
+      guideLines.add(guideLine(ends.map(dome), 2, ink.withAlpha(0.9), ink.withAlpha(0.3)));
     }
     // The part of the day the selected event covers, drawn heavier.
     if (event) for (const run of daylightRuns(track.samples, event[0], event[1])) {
-      guides.entities.add({ polyline: { positions: run.map(dome), width: 6, material: C.Color.fromCssColorString('#ff8a3c'),
-        depthFailMaterial: C.Color.fromCssColorString('#ff8a3c').withAlpha(0.35) } });
+      const orange = C.Color.fromCssColorString('#ff8a3c');
+      guideLines.add(guideLine(run.map(dome), 6, orange, orange.withAlpha(0.35)));
     }
     if (zone) for (const mark of hourMarks(track.start, track.end, zone)) {
       const sample = track.at(mark.time);
@@ -392,6 +398,21 @@ function updateGuides() {
   const sun = astronomy?.sun;
   sunMarker.show = !!sun && sun.altitude > 0;
   if (sunMarker.show) sunMarker.position = dome(sun);
+}
+
+// A guide line built at once rather than in the background, as entity lines
+// are, so resizing the guides swaps the old lines for the new in one frame
+// instead of leaving a gap. Where it passes behind the mesh it is drawn faintly.
+function guideLine(positions, width, color, faint) {
+  return new C.Primitive({
+    geometryInstances: new C.GeometryInstance({
+      geometry: new C.PolylineGeometry({ positions, width, arcType: C.ArcType.NONE,
+        vertexFormat: C.PolylineColorAppearance.VERTEX_FORMAT }),
+      attributes: { color: C.ColorGeometryInstanceAttribute.fromColor(color),
+        depthFailColor: C.ColorGeometryInstanceAttribute.fromColor(faint) } }),
+    appearance: new C.PolylineColorAppearance({ translucent: true }),
+    depthFailAppearance: new C.PolylineColorAppearance({ translucent: true }),
+    asynchronous: false });
 }
 
 async function placeObserver() {
