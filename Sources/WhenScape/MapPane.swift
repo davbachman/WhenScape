@@ -6,6 +6,7 @@ import WhenScapeCore
 struct MapPane: View {
     @ObservedObject var model: AppModel
     @StateObject private var contacts = ContactsService()
+    @StateObject private var here = CurrentLocation()
     @State private var position: MapCameraPosition = .automatic
     @State private var query = ""
     @State private var results: [MKMapItem] = []
@@ -23,7 +24,8 @@ struct MapPane: View {
                 Label("Location", systemImage: "map").font(.headline)
                 Spacer()
                 saveButton
-                Button { recenter() } label: { Image(systemName: "location") }.help("Center on observer")
+                Button { recenter() } label: { Image(systemName: "scope") }.help("Center the map on the observer")
+                    .accessibilityLabel("Center the map on the observer")
                     .buttonStyle(.borderless)
             }.padding(.horizontal, 16).padding(.vertical, 12)
             HStack(spacing: 8) {
@@ -136,33 +138,55 @@ struct MapPane: View {
         contacts.cardPlaces.filter { !model.places.hasSaved(label: $0.kind) }
     }
 
-    @ViewBuilder private var shortcuts: some View {
-        let recents = model.places.unsavedRecents
-        if !model.places.saved.isEmpty || !cardSuggestions.isEmpty || !recents.isEmpty || contacts.authorization == .notDetermined {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(model.places.saved) { place in
-                        chip(icon(for: place), place.title, prominent: true, help: place.name) { go(to: place) }
-                            .contextMenu { Button("Remove “\(place.title)”") { model.forget(place) } }
+    /// Here, then saved places, Home and Work from the user's card, recent
+    /// places, and the button that turns on Contacts.
+    private var shortcuts: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                chip("location.fill", "Here", prominent: true, help: "Stand where this Mac is", busy: here.isLocating) { goHere() }
+                ForEach(model.places.saved) { place in
+                    chip(icon(for: place), place.title, prominent: true, help: place.name) { go(to: place) }
+                        .contextMenu { Button("Remove “\(place.title)”") { model.forget(place) } }
+                }
+                ForEach(cardSuggestions) { place in
+                    chip("person.crop.circle", place.kind, prominent: false,
+                         help: "\(place.line), from your contact card. Click to go there and save it as \(place.kind).",
+                         busy: locating == place.id) { useCardPlace(place) }
+                }
+                ForEach(model.places.unsavedRecents) { place in
+                    chip("clock", place.name, prominent: false, help: "Recent: \(place.name)") { go(to: place) }
+                        .contextMenu { Button("Remove from Recents") { model.forget(place) } }
+                }
+                if contacts.authorization == .notDetermined {
+                    chip("person.crop.circle.badge.plus", contacts.isRequestingAccess ? "Asking…" : "Contacts", prominent: false,
+                         help: "Find people’s addresses from Contacts when you search. WhenScape only reads names and addresses.") {
+                        Task { await contacts.requestAccess() }
                     }
-                    ForEach(cardSuggestions) { place in
-                        chip("person.crop.circle", place.kind, prominent: false,
-                             help: "\(place.line), from your contact card. Click to go there and save it as \(place.kind).",
-                             busy: locating == place.id) { useCardPlace(place) }
-                    }
-                    ForEach(recents) { place in
-                        chip("clock", place.name, prominent: false, help: "Recent: \(place.name)") { go(to: place) }
-                            .contextMenu { Button("Remove from Recents") { model.forget(place) } }
-                    }
-                    if contacts.authorization == .notDetermined {
-                        chip("person.crop.circle.badge.plus", contacts.isRequestingAccess ? "Asking…" : "Contacts", prominent: false,
-                             help: "Find people’s addresses from Contacts when you search. WhenScape only reads names and addresses.") {
-                            Task { await contacts.requestAccess() }
-                        }
-                    }
-                }.padding(.horizontal, 12)
+                }
+            }.padding(.horizontal, 12)
+        }
+        .padding(.bottom, 8)
+    }
+
+    /// Moves the observer to where this Mac is. A rough fix is used, with a note.
+    private func goHere() {
+        closeResults()
+        here.locate { result in
+            switch result {
+            case .success(let location):
+                query = ""
+                model.setLocation(location.coordinate)
+                let accuracy = location.horizontalAccuracy
+                if accuracy > 150 {
+                    let distance = Measurement(value: accuracy, unit: UnitLength.meters)
+                        .formatted(.measurement(width: .abbreviated, usage: .road))
+                    searchMessage = "This Mac placed you within about \(distance). Click the map to adjust."
+                }
+            case .failure(.denied):
+                searchMessage = "Location access is off for WhenScape. Turn it on in System Settings › Privacy & Security › Location Services."
+            case .failure(.unavailable):
+                searchMessage = "This Mac’s location is unavailable right now. Search for the place or click the map."
             }
-            .padding(.bottom, 8)
         }
     }
 

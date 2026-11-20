@@ -107,12 +107,16 @@ try {
   // after dark; scrolling out widens the lens again, so it shrinks.
   assert.equal(await page.locator('#find-sun').isDisabled(), true);
   await page.locator('#find-moon').click();
-  await page.waitForTimeout(300);
+  // Software rendering on CI can be slow, so wait for the result rather than a fixed time.
+  const facingSouth = () => {
+    const match = document.querySelector('#heading')?.textContent.match(/(\d+)°/);
+    return match && Number(match[1]) > 120 && Number(match[1]) < 240;
+  };
+  await page.waitForFunction(facingSouth, null, { timeout: 15000 }).catch(() => {});
   const facing = Number((await page.locator('#heading').textContent()).match(/(\d+)°/)[1]);
   assert.ok(facing > 120 && facing < 240, `expected to face the Moon in the south, not ${facing}°`);
   await page.addStyleTag({ content: '#setup-message { display: none !important; }' });
   const moonPixels = async () => {
-    await page.waitForTimeout(300);
     const shot = await page.locator('#scene').screenshot();
     return page.evaluate(async data => {
       const bitmap = await createImageBitmap(new Blob([new Uint8Array(data)], { type: 'image/png' }));
@@ -124,10 +128,20 @@ try {
       return bright;
     }, [...shot]);
   };
-  const close = await moonPixels();
+  // Takes screenshots until the count settles where expected, for up to about ten seconds.
+  const moonPixelsUntil = async done => {
+    let count = 0;
+    for (let tries = 0; tries < 20; tries++) {
+      await page.waitForTimeout(500);
+      count = await moonPixels();
+      if (done(count)) break;
+    }
+    return count;
+  };
+  const close = await moonPixelsUntil(count => count > 300);
   assert.ok(close > 300, `the Moon should fill the narrow lens, brightly; ${close} bright pixels`);
   for (let i = 0; i < 4; i++) await page.locator('#scene canvas').first().dispatchEvent('wheel', { deltaY: 200 });
-  const wide = await moonPixels();
+  const wide = await moonPixelsUntil(count => count < close / 3);
   assert.ok(wide < close / 3, `scrolling out should widen the lens; ${close} then ${wide} bright pixels`);
 
   assert.equal(await page.locator('#fatal-message').isVisible(), false);

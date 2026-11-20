@@ -335,7 +335,8 @@ function lookAtSky(body) {
     setCamera();
     if (t < 1) requestAnimationFrame(step); else aim = undefined;
   };
-  requestAnimationFrame(step);
+  // With reduced motion the view turns at once, without waiting for a frame.
+  if (duration) requestAnimationFrame(step); else step(start);
 }
 
 // The finders work only for a body above the horizon.

@@ -248,24 +248,45 @@ final class AppModel: ObservableObject {
     }
 }
 
+/// The Cesium token, kept in the login keychain.
+///
+/// Early ad-hoc-signed builds saved it under "ion", and macOS went on asking
+/// for permission to read that entry at every launch, even after Always Allow.
+/// So once it has been read with the user's permission, the token is copied
+/// to an entry this app creates itself, which it (and later builds signed with
+/// the same certificate) can read without asking. The old entry is left alone,
+/// because removing it could ask again; an emptied token is saved as empty in
+/// the new entry, so it cannot come back from the old one.
 enum TokenStore {
     static let service = "com.whenscape.app.cesium"
+    private static let account = "cesium-ion", legacyAccount = "ion"
+
     static func read() -> String {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                    kSecAttrAccount as String: "ion", kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return "" }
-        return String(data: data, encoding: .utf8) ?? ""
+        if let token = copy(account) { return token }
+        guard let token = copy(legacyAccount), !token.isEmpty else { return "" }
+        _ = save(token)
+        return token
     }
+
     static func save(_ value: String) -> OSStatus {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: "ion"]
-        if value.isEmpty {
-            let status = SecItemDelete(query as CFDictionary)
-            return status == errSecItemNotFound ? errSecSuccess : status
-        }
+        let match = query(account)
         let attributes: [String: Any] = [kSecValueData as String: Data(value.utf8)]
-        let updated = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        let updated = SecItemUpdate(match as CFDictionary, attributes as CFDictionary)
         guard updated == errSecItemNotFound else { return updated }
-        return SecItemAdd(query.merging(attributes) { _, new in new } as CFDictionary, nil)
+        return SecItemAdd(match.merging(attributes) { _, new in new } as CFDictionary, nil)
+    }
+
+    private static func query(_ account: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
+    }
+
+    /// The entry's text, or nil when there is no such entry or it cannot be read.
+    private static func copy(_ account: String) -> String? {
+        var request = query(account)
+        request[kSecReturnData as String] = true
+        request[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(request as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 }

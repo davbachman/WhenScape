@@ -281,20 +281,22 @@ struct TimeControls: View {
     // time, which clears the selected event (the slider and playback do not).
     @ViewBuilder private var dateFields: some View {
         if model.rangeEnabled {
-            DateField(label: "From", selection: Binding(get: { model.start }, set: { model.chooseStart($0) }))
+            DateField(label: "From", selection: Binding(get: { model.start }, set: { model.chooseStart($0) }), showsNow: true)
             DateField(label: "To", selection: Binding(get: { model.end }, set: { model.chooseEnd($0) }),
                       earliest: model.start.addingTimeInterval(60))
         } else {
-            DateField(label: "Date & time", selection: Binding(get: { model.instant }, set: { model.chooseInstant($0) }))
+            DateField(label: "Date & time", selection: Binding(get: { model.instant }, set: { model.chooseInstant($0) }), showsNow: true)
         }
     }
 }
 
-/// A date and time field with a button that opens a calendar and clock.
+/// A date and time field with a button that opens a calendar and clock, and
+/// optionally one that jumps to the present moment.
 private struct DateField: View {
     let label: String
     @Binding var selection: Date
     var earliest: Date?
+    var showsNow = false
     @State private var showingCalendar = false
     @Environment(\.timeZone) private var timeZone
     var body: some View {
@@ -316,6 +318,11 @@ private struct DateField: View {
                     // The popover is presented apart from the controls; keep the place's time zone.
                     .environment(\.timeZone, timeZone)
                 }
+            if showsNow {
+                Button("Now") { selection = Date() }
+                    .controlSize(.small)
+                    .help("Jump to the current date and time")
+            }
         }
     }
     @ViewBuilder private func picker(_ title: String) -> some View {
@@ -363,7 +370,7 @@ struct SettingsView: View {
                 Text("Shows camera, ground and tile readings over the 3D scene, and lets Safari’s Web Inspector attach to it (Develop menu › this Mac › WhenScape). It turns off when WhenScape quits.").font(.caption).foregroundStyle(.secondary)
             }
             Section("Data & privacy") {
-                Text("Calendar access is read-only within WhenScape. Event titles, notes and attendees stay on your Mac. Contacts, if you allow them, are read for names and addresses only; they stay on your Mac except an address you choose, which goes to Apple to find it. Place searches go to Apple; coordinates and requested times go to map and weather providers.")
+                Text("Calendar access is read-only within WhenScape. Event titles, notes and attendees stay on your Mac. Contacts, if you allow them, are read for names and addresses only; they stay on your Mac except an address you choose, which goes to Apple to find it. This Mac’s location is read only when you click Here. Place searches go to Apple; coordinates and requested times go to map and weather providers.")
                 Text("Astronomy is calculated. Weather uses forecasts, historical estimates, or a five-year seasonal baseline. Buildings may have estimated heights or missing geometry; the scene is not a historical reconstruction.")
                 Link("Weather data: Open-Meteo", destination: URL(string: "https://open-meteo.com/")!)
                 Text("The public Open-Meteo endpoint is for non-commercial use. Review provider plans and licenses before commercial distribution.")
