@@ -71,3 +71,5 @@ body:has(#weather-provenance[open]) #setup-message { visibility: hidden; }
 @media (max-height: 500px) { #setup-message { top: 115px; width: auto; max-width: calc(100% - 36px); padding: 10px 14px; } #setup-message .notice-icon, #setup-message p { display: none; } }
 @media (prefers-reduced-transparency: reduce) { .glass { background: #1c2b38; backdrop-filter: none; } }
 .cesium-credit-logoContainer img { height: 16px !important; width: auto !important; opacity: 0.8; }
+/* Developer readout, shown only with the "Show scene diagnostics" setting. */
+.diagnostics { position: absolute; z-index: 5; top: 118px; right: 27px; margin: 0; padding: 9px 12px; max-width: min(460px, calc(100% - 54px)); overflow: hidden; font: 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #dfe7ee; white-space: pre; pointer-events: none; }

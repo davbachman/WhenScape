@@ -23,12 +23,13 @@ final class AppModel: ObservableObject {
     @Published var eventSearchRevision = UUID()
     @Published var isPlaying = false
     @Published var playbackDirection = 1.0
-    @Published var playbackSpeed = 300.0
-    @Published var weatherEnabled = true
-    @Published var snowCover = false
+    @Published var playbackSpeed = Preferences.double(.playbackSpeed, default: 300) { didSet { Preferences.set(playbackSpeed, .playbackSpeed) } }
+    @Published var weatherEnabled = Preferences.bool(.weatherEnabled, default: true) { didSet { Preferences.set(weatherEnabled, .weatherEnabled) } }
+    @Published var snowCover = Preferences.bool(.snowCover, default: false) { didSet { Preferences.set(snowCover, .snowCover) } }
     @Published var reducedMotion = false
-    @Published var computedShadows = false
-    @Published var detail = "balanced"
+    @Published var computedShadows = Preferences.bool(.computedShadows, default: false) { didSet { Preferences.set(computedShadows, .computedShadows) } }
+    @Published var sceneDiagnostics = Preferences.bool(.sceneDiagnostics, default: false) { didSet { Preferences.set(sceneDiagnostics, .sceneDiagnostics) } }
+    @Published var detail = Preferences.string(.detail, default: "balanced", allowed: ["low", "balanced", "high"]) { didSet { Preferences.set(detail, .detail) } }
     @Published var ionToken = TokenStore.read()
     @Published var sceneMessage = "Preparing the scene…"
     @Published var sceneReady = false
@@ -45,6 +46,21 @@ final class AppModel: ObservableObject {
         let initialInstant: Date
     }
     private var pendingAllDayTime: PendingAllDayTime?
+
+    /// Starts at the last place explored, or Claremont the first time.
+    init() {
+        guard let place = Preferences.place() else { return }
+        latitude = place.latitude
+        longitude = place.longitude
+        locationName = place.name
+        if let zone = place.timeZone { timeZone = zone }
+        else { setLocation(coordinate, name: place.name) }
+    }
+
+    private func savePlace() {
+        Preferences.savePlace(.init(latitude: latitude, longitude: longitude, name: locationName,
+                                    timeZone: timeZoneNote == nil ? timeZone : nil))
+    }
 
     var coordinate: CLLocationCoordinate2D { .init(latitude: latitude, longitude: longitude) }
     var isAllDaySelected: Bool { sourceEvent?.isAllDay == true }
@@ -120,6 +136,7 @@ final class AppModel: ObservableObject {
         timeZone = knownTimeZone ?? TimeZone(secondsFromGMT: 0)!
         timeZoneNote = knownTimeZone == nil ? "Resolving local time zone; showing UTC" : nil
         if knownTimeZone != nil { applyPendingAllDayTime() }
+        savePlace()
         geocoder.reverseGeocodeLocation(CLLocation(latitude: latitude, longitude: longitude)) { [weak self] places, _ in
             Task { @MainActor in
                 guard let self, self.locationRevision == revision else { return }
@@ -135,6 +152,7 @@ final class AppModel: ObservableObject {
                     }
                     else if knownTimeZone == nil { self.timeZoneNote = "Local time zone unavailable; showing UTC" }
                 } else if knownTimeZone == nil { self.timeZoneNote = "Local time zone unavailable; showing UTC" }
+                self.savePlace()
             }
         }
     }
@@ -182,7 +200,7 @@ final class AppModel: ObservableObject {
                 "time": formatter.string(from: instant), "start": formatter.string(from: interval.start),
                 "end": formatter.string(from: interval.end), "rangeEnabled": rangeEnabled,
                 "timeZone": timeZone.identifier, "weatherEnabled": weatherEnabled,
-                "snowCover": snowCover, "reducedMotion": reducedMotion, "computedShadows": computedShadows, "detail": detail, "ionToken": ionToken]
+                "snowCover": snowCover, "reducedMotion": reducedMotion, "computedShadows": computedShadows, "diagnostics": sceneDiagnostics, "detail": detail, "ionToken": ionToken]
     }
     func receiveSceneStatus(_ status: [String: Any]) {
         if let ready = status["ready"] as? Bool { sceneReady = ready }

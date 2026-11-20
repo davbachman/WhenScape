@@ -10,7 +10,10 @@ struct CesiumView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .nonPersistent()
+        // The app's own on-disk store, so map tiles and other downloads can be
+        // reused across launches as far as each provider's cache headers allow,
+        // instead of being fetched again (and counted against quotas) every time.
+        configuration.websiteDataStore = .default()
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         configuration.userContentController.add(WeakSceneMessageHandler(target: context.coordinator), name: "scene")
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -18,6 +21,7 @@ struct CesiumView: NSViewRepresentable {
         webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = false
         webView.setValue(false, forKey: "drawsBackground")
+        webView.isInspectable = Self.inspectable(model)
         context.coordinator.webView = webView
         context.coordinator.start()
         return webView
@@ -25,7 +29,17 @@ struct CesiumView: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.model = model
+        webView.isInspectable = Self.inspectable(model)
         context.coordinator.pushState()
+    }
+
+    /// Safari's Web Inspector can attach in debug builds, or with the diagnostics setting on.
+    private static func inspectable(_ model: AppModel) -> Bool {
+        #if DEBUG
+        return true
+        #else
+        return model.sceneDiagnostics
+        #endif
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
@@ -49,14 +63,42 @@ struct CesiumView: NSViewRepresentable {
         private var stopped = false
         private var terminationRetries = 0
         private var generation = UUID()
+        private var observers: [NSObjectProtocol] = []
+        private var lastActivity: [String: Bool]?
 
         init(model: AppModel) { self.model = model }
+
+        /// Tell the scene whether its window can be seen and whether the app is
+        /// in front, so it stops drawing while covered and slows down behind.
+        private func observeActivity() {
+            let center = NotificationCenter.default
+            let names: [Notification.Name] = [NSWindow.didChangeOcclusionStateNotification,
+                                              NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
+                                              NSApplication.didHideNotification, NSApplication.didUnhideNotification]
+            observers = names.map { name in
+                center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.pushActivity() }
+                }
+            }
+        }
+
+        func pushActivity(force: Bool = false) {
+            guard loaded, !stopped, let webView else { return }
+            // Before the view joins a window there is nothing to judge; assume visible.
+            let visible = webView.window.map { $0.occlusionState.contains(.visible) } ?? true
+            let activity = ["visible": visible, "active": NSApp.isActive]
+            guard force || activity != lastActivity else { return }
+            lastActivity = activity
+            webView.callAsyncJavaScript("window.whenScape?.setActivity(activity);", arguments: ["activity": activity],
+                                        in: nil, in: .page) { _ in }
+        }
 
         func start() {
             guard let root = Bundle.module.url(forResource: "Web", withExtension: nil) else {
                 fail("The bundled scene is missing. Rebuild the app’s web assets.")
                 return
             }
+            observeActivity()
             let server = LocalAssetServer(root: root)
             self.server = server
             server.start { [weak self] result in
@@ -73,6 +115,8 @@ struct CesiumView: NSViewRepresentable {
         func stop() {
             stopped = true
             generation = UUID()
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers = []
             server?.stop()
             server = nil
             webView = nil
@@ -108,8 +152,10 @@ struct CesiumView: NSViewRepresentable {
                   isSceneURL(message.frameInfo.request.url), let status = message.body as? [String: Any] else { return }
             model.receiveSceneStatus(status)
             if (status["ready"] as? Bool) == true || (status["type"] as? String) == "ready" {
+                let first = !loaded
                 loaded = true
                 pushState()
+                if first { pushActivity(force: true) }
             }
         }
 
@@ -118,6 +164,7 @@ struct CesiumView: NSViewRepresentable {
             loaded = true
             lastJSON = nil
             pushState(force: true)
+            pushActivity(force: true)
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {

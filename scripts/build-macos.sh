@@ -45,8 +45,20 @@ if [[ ! -d "$RESOURCE_BUNDLE" ]]; then
     exit 1
 fi
 ditto --norsrc --noextattr --noacl "$RESOURCE_BUNDLE" "$APP_DIR/Contents/Resources/WhenScape_WhenScape.bundle"
-codesign --force --deep --sign - "$APP_DIR"
+# Sign with a development certificate when one is available, so macOS keeps
+# granted permissions (such as calendar access) across rebuilds; an ad-hoc
+# signature looks like a new app every time. WHENSCAPE_SIGN_IDENTITY overrides
+# the choice ("-" forces ad-hoc signing, as in CI).
+SIGN_IDENTITY="${WHENSCAPE_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null \
+    | sed -n 's/^ *[0-9][0-9]*) \([0-9A-F]\{40\}\) "Apple Development: .*/\1/p' | head -n 1)}"
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+codesign --force --deep --sign "$SIGN_IDENTITY" "$APP_DIR"
 codesign --verify --deep --strict "$APP_DIR"
+if [[ "$SIGN_IDENTITY" == "-" ]]; then
+    echo "Signed ad hoc; macOS may ask again for calendar access after each rebuild."
+else
+    echo "Signed with a development certificate."
+fi
 APP_LINK="$PWD/build/WhenScape.app"
 if [[ "$APP_LINK" != "$APP_DIR" ]]; then
     if [[ -d "$APP_LINK" && ! -L "$APP_LINK" ]]; then

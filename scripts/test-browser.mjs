@@ -31,6 +31,13 @@ await page.route('**/*', async route => {
   return route.abort();
 });
 
+// Wait for the weather of a particular hour, not merely of a kind: a previous
+// step may already have loaded weather of the same kind for another hour.
+const weatherFor = (kind, time) => page.waitForFunction(([kind, time]) => {
+  const weather = window.whenScapeStatus?.weather;
+  return weather?.kind === kind && weather.validAt === new Date(time).toISOString();
+}, [kind, time]);
+
 try {
   await page.goto('http://127.0.0.1:4173', { waitUntil: 'networkidle' });
   await page.waitForFunction(() => window.whenScapeStatus?.ready);
@@ -57,7 +64,7 @@ try {
   state.weatherEnabled = true;
   state.time = '2024-01-21T20:00:00Z';
   await page.evaluate(state => window.whenScape.update(state), state);
-  await page.waitForFunction(() => window.whenScapeStatus?.weather?.kind === 'historical');
+  await weatherFor('historical', state.time);
   assert.match(await page.locator('#weather-summary').textContent(), /Snow/);
   assert.equal(await page.locator('#snow-label').isVisible(), true);
   await mkdir('artifacts', { recursive: true });
@@ -75,7 +82,7 @@ try {
   cloudsOnly = true;
   state.time = '2024-06-22T20:00:00Z';
   await page.evaluate(state => window.whenScape.update(state), state);
-  await page.waitForFunction(() => window.whenScapeStatus?.weather?.kind === 'historical');
+  await weatherFor('historical', state.time);
   assert.match(await page.locator('#weather-summary').textContent(), /Overcast/);
   const foregroundAlpha = await page.evaluate(() => {
     const canvas = document.querySelector('#weather-effects');

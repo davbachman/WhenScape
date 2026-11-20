@@ -1,10 +1,13 @@
 import { calculateAstronomy, clamp, compassName, sunTrack, moonEvents } from './astronomy.js';
 import { unitsFor, formatTemperature, conditionName, windReadout, notableGust, summaryLine } from './briefing.js';
 import { timelineMarkup } from './timeline.js';
-import { domePoint, ringPoints, daylightRuns, hourMarks, clockLabel } from './guides.js';
+import { clockLabel } from './guides.js';
+import { createGuides } from './guideview.js';
 import { WeatherController } from './weather.js';
 import { createCloudStage } from './clouds.js';
 import { flagExtension, flagShape, flagShadow, shadowOffset } from './flag.js';
+import { createTintShader, createSnowShader, meshTone } from './meshlook.js';
+import { createDiagnostics } from './diagnostics.js';
 
 const C = window.Cesium;
 const $ = id => document.getElementById(id);
@@ -20,7 +23,9 @@ let heading = 0, pitch = 0.025, eyeHeight = 1.7;
 const droneLimits = { minPitch: -80 * Math.PI / 180, maxPitch: -6 * Math.PI / 180, minRange: 60, maxRange: 2500, minHeight: 40 };
 let dronePitch = -20 * Math.PI / 180, droneRange = 175;
 let flag, flagTimer, lastFlagRender = 0, lastSkyRender = 0;
-let guides, guideLines, guidesKey, sunMarker, track, trackKey;
+let guides, track, trackKey;
+// Figures for the diagnostics readout only.
+let diagnostics, groundReadings = [], tileFailures = 0, framesRendered = 0, frameRate = 0;
 let series = [], seriesKey, seriesAbort, moonTimes, moonKey, timelineEvents = {};
 const units = unitsFor(globalThis.navigator?.language ?? 'en-US');
 const cloudDrift = { x: 0, y: 0 };
@@ -31,6 +36,11 @@ let lastWeatherKey, lastWeatherPlace, weatherTimer, weatherAbort, lastAstronomyK
 let lastWeatherAttempt = 0;
 let weatherController = new WeatherController();
 let animationFrame, lastFrame = 0, weatherClock = 0, lastStatus = 0;
+// Whether the app's window can be seen and whether the app is frontmost, as
+// reported by the native side. A covered window draws nothing; a visible window
+// of a background app animates more slowly.
+let activity = { visible: true, active: true };
+const sceneShown = () => activity.visible && !document.hidden;
 let statusTimer;
 const overlay = $('weather-effects');
 const ctx = overlay.getContext('2d');
@@ -102,9 +112,10 @@ function createViewer() {
   cloudStage = viewer.scene.postProcessStages.add(createCloudStage(C, viewer.scene));
   prepareStarTextures();
   flag = createFlag();
-  guides = new C.CustomDataSource('guides');
-  viewer.dataSources.add(guides);
-  guideLines = viewer.scene.primitives.add(new C.PrimitiveCollection());
+  guides = createGuides(C, viewer);
+  diagnostics = createDiagnostics(document.body, diagnosticRows);
+  viewer.scene.postRender.addEventListener(() => { framesRendered++; });
+  setInterval(() => { frameRate = framesRendered; framesRendered = 0; }, 1000);
   viewer.scene.renderError.addEventListener((_scene, error) => failScene(error));
   const handler = viewer.screenSpaceEventHandler;
   handler.removeInputAction(C.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
@@ -114,10 +125,8 @@ function createViewer() {
   // Do not let focus leave the viewport when keyboard arrows rotate it.
   $('compass').addEventListener('click', () => { heading = 0; setCamera(); });
   $('refresh-weather').addEventListener('click', () => { lastWeatherKey = undefined; queueWeather(); });
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) { lastFrame = 0; scheduleEffects(); refreshWeatherIfNeeded(); viewer.scene.requestRender(); }
-  });
-  setInterval(() => { if (!document.hidden) refreshWeatherIfNeeded(); }, 60_000);
+  document.addEventListener('visibilitychange', applyActivity);
+  setInterval(() => { if (sceneShown()) refreshWeatherIfNeeded(); }, 60_000);
 }
 
 function prepareStarTextures() {
@@ -278,15 +287,31 @@ function createFlag() {
   };
   const shade = C.Color.BLACK.withAlpha(0.4);
   const onMesh = C.ClassificationType.CESIUM_3D_TILE;
+  // The pole and cloth are primitives rebuilt by drawFlag, at once rather than
+  // in the background, so the flag never blinks out when it moves or resizes.
+  // (Entities driven by a per-frame callback would be rebuilt by Cesium on every
+  // frame, and each rebuild asks for another frame, so the scene would never rest.)
+  const body = viewer.scene.primitives.add(new C.PrimitiveCollection());
+  const poleColor = C.ColorGeometryInstanceAttribute.fromColor(C.Color.fromCssColorString('#f3f0e8'));
+  const clothColor = C.ColorGeometryInstanceAttribute.fromColor(C.Color.fromCssColorString('#e8552d'));
+  const draw = shown => {
+    body.removeAll();
+    if (!shown || !state) return;
+    const { at } = pinFrame();
+    const shape = cloth();
+    body.add(new C.Primitive({ asynchronous: false, shadows: C.ShadowMode.DISABLED,
+      geometryInstances: new C.GeometryInstance({ attributes: { color: poleColor },
+        geometry: new C.PolylineGeometry({ positions: [at(0, 0, 0), at(0, 0, flagHeight())], width: 3, arcType: C.ArcType.NONE,
+          vertexFormat: C.PolylineColorAppearance.VERTEX_FORMAT }) }),
+      appearance: new C.PolylineColorAppearance() }));
+    body.add(new C.Primitive({ asynchronous: false, shadows: C.ShadowMode.DISABLED,
+      geometryInstances: new C.GeometryInstance({ attributes: { color: clothColor },
+        geometry: new C.WallGeometry({ positions: shape.positions, maximumHeights: shape.tops, minimumHeights: shape.bottoms,
+          vertexFormat: C.PerInstanceColorAppearance.VERTEX_FORMAT }) }),
+      appearance: new C.PerInstanceColorAppearance({ translucent: false, faceForward: true }) }));
+  };
   return {
-    // Recomputed every frame, like the cloth, so a resize never leaves a gap.
-    pole: viewer.entities.add({ show: false, polyline: { width: 3, material: C.Color.fromCssColorString('#f3f0e8'),
-      positions: new C.CallbackProperty(() => { if (!state) return []; const { at } = pinFrame(); return [at(0, 0, 0), at(0, 0, flagHeight())]; }, false) } }),
-    cloth: viewer.entities.add({ show: false, wall: {
-      positions: new C.CallbackProperty(() => state ? cloth().positions : [], false),
-      maximumHeights: new C.CallbackProperty(() => state ? cloth().tops : [], false),
-      minimumHeights: new C.CallbackProperty(() => state ? cloth().bottoms : [], false),
-      material: C.Color.fromCssColorString('#e8552d'), shadows: C.ShadowMode.DISABLED } }),
+    draw,
     poleShadow: viewer.entities.add({ show: false, polyline: { width: 3, clampToGround: true, classificationType: onMesh, material: shade } }),
     clothShadow: viewer.entities.add({ show: false, polygon: { classificationType: onMesh, material: shade } }),
   };
@@ -296,7 +321,7 @@ function updateFlag() {
   if (!flag || !state || !viewer) return;
   flagSize = clamp(droneRange * 0.12, 8, 140);
   const shown = photoreal;
-  flag.pole.show = flag.cloth.show = shown;
+  flag.draw(shown);
   // Direct sunlight strong enough to cast a visible shadow.
   const enabled = state.weatherEnabled && weather.kind !== 'missing';
   const clouds = enabled ? clamp((weather.cloudCover ?? 0) / 100, 0, 1) : 0;
@@ -340,79 +365,36 @@ function ensureTrack() {
   return track;
 }
 
-// Compass ring on the ground and the day's Sun path overhead, both centred on
-// the flag. The arc is a dome: each point lies in the Sun's real direction at
-// that time, so sunrise and sunset meet the ring at their compass bearings.
+// Compass ring and the day's Sun path around the flag; see guideview.js.
 function updateGuides() {
   if (!guides) return;
-  guides.show = guideLines.show = photoreal;
-  if (!photoreal || !state) return;
-  const { at } = pinFrame();
+  if (!photoreal || !state) { guides.update({ shown: false }); return; }
   const radius = flagHeight() * 2.2;
   ensureTrack();
   const zone = sceneTimeZone();
   const event = state.rangeEnabled ? [Date.parse(state.start), Date.parse(state.end)] : null;
-  const layout = [state.latitude, state.longitude, Math.round(eyeHeight * 10), Math.round(radius), track.start, zone, event?.join('-')].join('|');
-  const ink = C.Color.fromCssColorString('#ffd24a');
-  const always = Number.POSITIVE_INFINITY;
-  const label = (text, color = C.Color.WHITE, size = 12) => ({ text, font: `600 ${size}px -apple-system, "Helvetica Neue", sans-serif`,
-    fillColor: color, outlineColor: C.Color.BLACK.withAlpha(0.75), outlineWidth: 3, style: C.LabelStyle.FILL_AND_OUTLINE,
-    pixelOffset: new C.Cartesian2(0, -13), disableDepthTestDistance: always });
-  const dome = sample => { const p = domePoint(Math.max(sample.altitude, 0), sample.azimuth, radius); return at(p.e, p.n, p.up); };
-  if (layout !== guidesKey) {
-    guidesKey = layout;
-    guides.entities.removeAll();
-    guideLines.removeAll();
-    // A level circle just above the pin's ground height. Draping it over the
-    // mesh breaks it up across roofs and trees; where it passes behind them
-    // it is drawn faintly instead.
-    guideLines.add(guideLine(ringPoints(radius).map(p => at(p.e, p.n, 1.5)), 2, C.Color.WHITE.withAlpha(0.8), C.Color.WHITE.withAlpha(0.28)));
-    for (const [name, bearing] of [['N', 0], ['E', 90], ['S', 180], ['W', 270]]) {
-      const p = domePoint(0, bearing, radius * 1.1);
-      guides.entities.add({ position: at(p.e, p.n, 1.5), label: { ...label(name, name === 'N' ? C.Color.fromCssColorString('#ffb27a') : C.Color.WHITE, 15),
-        pixelOffset: C.Cartesian2.ZERO } });
-    }
-    for (const run of daylightRuns(track.samples)) {
-      const ends = [track.sunrise, ...run, track.sunset].filter(Boolean).sort((a, b) => a.time - b.time);
-      guideLines.add(guideLine(ends.map(dome), 2, ink.withAlpha(0.9), ink.withAlpha(0.3)));
-    }
-    // The part of the day the selected event covers, drawn heavier.
-    if (event) for (const run of daylightRuns(track.samples, event[0], event[1])) {
-      const orange = C.Color.fromCssColorString('#ff8a3c');
-      guideLines.add(guideLine(run.map(dome), 6, orange, orange.withAlpha(0.35)));
-    }
-    if (zone) for (const mark of hourMarks(track.start, track.end, zone)) {
-      const sample = track.at(mark.time);
-      if (sample.altitude <= 1) continue;
-      guides.entities.add({ position: dome(sample), point: { pixelSize: 5, color: C.Color.WHITE, outlineColor: C.Color.BLACK.withAlpha(0.6), outlineWidth: 1,
-        disableDepthTestDistance: always }, label: mark.hour % 3 === 0 ? label(mark.label, C.Color.WHITE, 11) : undefined });
-    }
-    for (const [name, sample] of [['Sunrise', track.sunrise], ['Sunset', track.sunset]]) {
-      if (!sample) continue;
-      guides.entities.add({ position: dome(sample), point: { pixelSize: 7, color: ink, outlineColor: C.Color.BLACK.withAlpha(0.6), outlineWidth: 1,
-        disableDepthTestDistance: always }, label: label(zone ? `${name} ${clockLabel(sample.time, zone)}` : name, ink) });
-    }
-    sunMarker = guides.entities.add({ point: { pixelSize: 15, color: C.Color.fromCssColorString('#fff3b0'), outlineColor: ink, outlineWidth: 3,
-      disableDepthTestDistance: always } });
-  }
-  const sun = astronomy?.sun;
-  sunMarker.show = !!sun && sun.altitude > 0;
-  if (sunMarker.show) sunMarker.position = dome(sun);
+  guides.update({ shown: true, at: pinFrame().at, radius, track, zone, event, sun: astronomy?.sun,
+    key: [state.latitude, state.longitude, Math.round(eyeHeight * 10), Math.round(radius), track.start, zone, event?.join('-')].join('|') });
 }
 
-// A guide line built at once rather than in the background, as entity lines
-// are, so resizing the guides swaps the old lines for the new in one frame
-// instead of leaving a gap. Where it passes behind the mesh it is drawn faintly.
-function guideLine(positions, width, color, faint) {
-  return new C.Primitive({
-    geometryInstances: new C.GeometryInstance({
-      geometry: new C.PolylineGeometry({ positions, width, arcType: C.ArcType.NONE,
-        vertexFormat: C.PolylineColorAppearance.VERTEX_FORMAT }),
-      attributes: { color: C.ColorGeometryInstanceAttribute.fromColor(color),
-        depthFailColor: C.ColorGeometryInstanceAttribute.fromColor(faint) } }),
-    appearance: new C.PolylineColorAppearance({ translucent: true }),
-    depthFailAppearance: new C.PolylineColorAppearance({ translucent: true }),
-    asynchronous: false });
+// What the diagnostics readout shows. Heights are metres above the ellipsoid.
+function diagnosticRows() {
+  const camera = viewer.camera.positionCartographic;
+  const ground = eyeHeight - 1.7;
+  const fixed = (value, digits = 1) => Number.isFinite(value) ? value.toFixed(digits) : '–';
+  return {
+    view: photoreal ? 'aerial · photorealistic mesh' : buildings ? 'ground · terrain + OSM buildings' : 'sky preview',
+    camera: `${fixed(camera.height)} m (${fixed(camera.height - ground)} m above ground)`,
+    ground: `${fixed(ground)} m`,
+    readings: groundReadings.length ? groundReadings.map(h => fixed(h)).join(' ') : undefined,
+    orbit: photoreal ? `range ${fixed(droneRange, 0)} m · pitch ${fixed(dronePitch * 180 / Math.PI)}° · heading ${fixed(normalizeHeading(), 0)}°` : undefined,
+    look: photoreal ? undefined : `heading ${fixed(normalizeHeading(), 0)}° · pitch ${fixed(pitch * 180 / Math.PI)}°`,
+    flag: photoreal ? `${fixed(flagHeight())} m` : undefined,
+    globe: viewer.scene.globe ? `${viewer.scene.globe.show ? 'shown' : 'hidden'} · tiles ${viewer.scene.globe.tilesLoaded ? 'loaded' : 'loading'}` : 'removed',
+    tiles: buildings ? `${buildings.tilesLoaded ? 'loaded' : 'loading'} · ${(buildings.totalMemoryUsageInBytes / 1048576).toFixed(0)} MB · ${tileFailures} failed` : 'none',
+    frames: `${frameRate}/s${sceneShown() ? '' : ' · paused (window hidden)'}${activity.active ? '' : ' · app in background'}`,
+    weather: `${weather.kind}${weather.validAt ? ` · ${weather.validAt.slice(0, 16)}Z` : ''}`,
+  };
 }
 
 async function placeObserver() {
@@ -436,6 +418,7 @@ async function placeObserver() {
       const points = around.map(([east, north]) => C.Cartographic.fromDegrees(longitude + east * metres / across, latitude + north * metres));
       const sampled = await viewer.scene.sampleHeightMostDetailed(points);
       if (generation !== positionGeneration) return;
+      groundReadings = sampled.map(p => p?.height);
       const heights = sampled.map(p => p?.height).filter(Number.isFinite).sort((x, y) => x - y);
       if (!heights.length) throw new Error('No mesh height');
       const typical = heights[Math.floor(heights.length / 2)];
@@ -469,6 +452,8 @@ async function placeObserver() {
 
 async function loadGeography(token) {
   const generation = ++geometryGeneration;
+  tileFailures = 0;
+  groundReadings = [];
   ++positionGeneration;
   terrainAvailable = false;
   terrain = undefined;
@@ -523,6 +508,7 @@ async function loadGeography(token) {
     viewer.scene.globe.show = false;
     buildings = viewer.scene.primitives.add(mesh);
     buildings.tileFailed.addEventListener(() => {
+      tileFailures++;
       geometryMessage = 'Some 3D tiles unavailable · coverage incomplete';
       $('geometry-status').textContent = geometryMessage;
       postStatus(true);
@@ -560,6 +546,7 @@ async function loadGeography(token) {
   if (buildingsResult.status === 'fulfilled' && terrainAvailable) {
     buildings = viewer.scene.primitives.add(buildingsResult.value);
     buildings.tileFailed.addEventListener(() => {
+      tileFailures++;
       geometryMessage = 'Some building tiles unavailable · coverage incomplete';
       $('geometry-status').textContent = geometryMessage;
       postStatus(true);
@@ -605,64 +592,7 @@ function detailError() { return state?.detail === 'high' ? 8 : state?.detail ===
 function updateBuildingStyle() {
   if (!buildings) return;
   if (photoreal) {
-    // The mesh carries photographs taken in daylight and has no usable
-    // normals, so it cannot be lit. Multiply it by the current light instead.
-    if (!tintShader) tintShader = new C.CustomShader({
-      lightingModel: C.LightingModel.UNLIT,
-      uniforms: {
-        u_light: { type: C.UniformType.VEC3, value: new C.Cartesian3(1, 1, 1) },
-        u_hazeColor: { type: C.UniformType.VEC3, value: new C.Cartesian3(0.7, 0.8, 0.9) },
-        u_hazeDensity: { type: C.UniformType.FLOAT, value: 0 },
-        u_pin: { type: C.UniformType.VEC3, value: new C.Cartesian3() },
-        u_east: { type: C.UniformType.VEC3, value: new C.Cartesian3(1, 0, 0) },
-        u_north: { type: C.UniformType.VEC3, value: new C.Cartesian3(0, 1, 0) },
-        u_cloudOffset: { type: C.UniformType.VEC2, value: new C.Cartesian2() },
-        u_cloudCover: { type: C.UniformType.FLOAT, value: 0 },
-        u_cloudShadow: { type: C.UniformType.FLOAT, value: 0 },
-        u_wet: { type: C.UniformType.FLOAT, value: 0 },
-        u_snow: { type: C.UniformType.FLOAT, value: 0 },
-        u_glow: { type: C.UniformType.FLOAT, value: 0 },
-      },
-      // The cloud pattern repeats the sky stage's, laid over the ground at the
-      // cloud layer's scale, so shadows drift with the clouds overhead.
-      fragmentShaderText: `
-      float groundHash(vec2 cell) { return fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453); }
-      float groundNoise(vec2 position) {
-        vec2 cell = floor(position);
-        vec2 part = fract(position);
-        part = part * part * (3.0 - 2.0 * part);
-        return mix(mix(groundHash(cell), groundHash(cell + vec2(1.0, 0.0)), part.x),
-          mix(groundHash(cell + vec2(0.0, 1.0)), groundHash(cell + vec2(1.0, 1.0)), part.x), part.y);
-      }
-      float groundLayers(vec2 position) {
-        float total = 0.0;
-        float weight = 0.5;
-        for (int i = 0; i < 5; ++i) {
-          total += weight * groundNoise(position);
-          position = position * 2.03 + vec2(17.0, 9.0);
-          weight *= 0.5;
-        }
-        return total;
-      }
-      void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material) {
-        vec3 photo = material.diffuse;
-        float brightness = dot(photo, vec3(0.299, 0.587, 0.114));
-        vec3 color = mix(photo, vec3(0.92, 0.94, 0.97), u_snow);
-        color *= 1.0 - 0.14 * u_wet;
-        // Under heavy cloud the light is flat: less colour, not just less light.
-        color = mix(color, vec3(dot(color, vec3(0.299, 0.587, 0.114))), 0.3 * smoothstep(0.55, 1.0, u_cloudCover));
-        vec3 offset = fsInput.attributes.positionWC - u_pin;
-        vec2 ground = vec2(dot(offset, u_east), dot(offset, u_north)) / 1500.0 + u_cloudOffset;
-        float threshold = mix(0.72, 0.18, u_cloudCover);
-        float shadow = smoothstep(threshold, threshold + 0.15, groundLayers(ground)) * smoothstep(0.02, 0.12, u_cloudCover);
-        color *= 1.0 - u_cloudShadow * shadow;
-        color *= u_light;
-        // After dark, pale surfaces pick up a warm tone, as if lit by lamps.
-        color += u_glow * vec3(1.0, 0.78, 0.5) * smoothstep(0.35, 0.8, brightness) * photo;
-        float distance = length(fsInput.attributes.positionEC);
-        material.diffuse = mix(color, u_hazeColor, 1.0 - exp(-distance * u_hazeDensity));
-      }`,
-    });
+    if (!tintShader) tintShader = createTintShader(C);
     updateMeshShader();
     buildings.customShader = tintShader;
     return;
@@ -671,81 +601,36 @@ function updateBuildingStyle() {
   if (!buildings.style) buildings.style = new C.Cesium3DTileStyle({ color: "color('#dbd5c8')" });
   const white = state.snowCover || (state.weatherEnabled && (weather.snowDepth ?? 0) > 0);
   if (white) {
-    if (!snowShader) snowShader = new C.CustomShader({
-      uniforms: { u_snowAmount: { type: C.UniformType.FLOAT, value: 0.72 } },
-      fragmentShaderText: `void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material) {
-        vec3 normalWC = normalize(czm_inverseViewRotation * fsInput.attributes.normalEC);
-        vec3 upWC = normalize(fsInput.attributes.positionWC);
-        float facingUp = smoothstep(0.4, 0.85, dot(normalWC, upWC));
-        material.diffuse = mix(material.diffuse, vec3(0.88, 0.91, 0.94), facingUp * u_snowAmount);
-        material.roughness = 1.0;
-      }`,
-    });
+    if (!snowShader) snowShader = createSnowShader(C);
     buildings.customShader = snowShader;
   } else { buildings.customShader = undefined; }
 }
 
-// Approximate colour of the light falling on the scene: dark blue at night,
-// warm near sunrise and sunset, dimmer and greyer under cloud.
-function meshLight() {
-  const altitude = astronomy?.sun.altitude ?? 45;
-  const enabled = state?.weatherEnabled && weather.kind !== 'missing';
-  const clouds = enabled ? clamp((weather.cloudCover ?? 0) / 100, 0, 1) : 0;
-  const daylight = clamp((altitude + 8) / 20, 0, 1);
-  const warmth = clamp(1 - Math.abs(altitude - 2) / 12, 0, 1) * (1 - clouds * 0.8);
-  const mix = (night, day, warm) => {
-    const base = night + (day - night) * daylight;
-    return (base + (warm - base) * warmth * 0.6) * (1 - clouds * 0.2 * daylight);
-  };
-  return new C.Cartesian3(mix(0.03, 1, 1.0), mix(0.04, 1, 0.76), mix(0.075, 1, 0.56));
-}
-
-// Approximate colour of the sky at the horizon, matching the painted sky,
-// used to fade distant ground into it.
-function horizonColor() {
-  const sunHeight = Math.sin((astronomy?.sun.altitude ?? 45) * Math.PI / 180);
-  const step = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
-  const day = step(-0.10, 0.12, sunHeight);
-  const twilight = step(-0.28, -0.03, sunHeight) * (1 - step(0.02, 0.32, sunHeight));
-  const enabled = state?.weatherEnabled && weather.kind !== 'missing';
-  const overcast = step(0.55, 1, enabled ? (weather.cloudCover ?? 0) / 100 : 0);
-  const blend = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
-  let color = blend([0.03, 0.045, 0.08], [0.66, 0.80, 0.93], day);
-  color = blend(color, [0.80, 0.52, 0.42], twilight);
-  color = blend(color, blend([0.045, 0.055, 0.075], [0.60, 0.64, 0.69], day), overcast * 0.85);
-  return new C.Cartesian3(...color);
-}
-
-// Everything the mesh's look depends on: light, haze, cloud shadows, wet or
-// snowy ground and the night tone. All of it is illustrative.
+// Feed the mesh shader the current sky, weather and pin; see meshlook.js.
 function updateMeshShader() {
   if (!tintShader || !state) return;
   const enabled = state.weatherEnabled && weather.kind !== 'missing';
-  const clouds = enabled ? clamp((weather.cloudCover ?? 0) / 100, 0, 1) : 0;
-  const sun = astronomy?.sun, moon = astronomy?.moon;
-  const daylight = clamp(((sun?.altitude ?? 45) + 8) / 20, 0, 1);
-  const light = meshLight();
-  // Moonlight lifts the night a little, more for a fuller, higher Moon.
-  const moonlight = moon && moon.altitude > 0 ? clamp(Math.sin(moon.altitude * Math.PI / 180) * 2.5, 0, 1) *
-    (astronomy.moonIlluminatedFraction ?? 0) * (1 - daylight) * (1 - clouds * 0.8) : 0;
-  light.x += 0.05 * moonlight; light.y += 0.065 * moonlight; light.z += 0.10 * moonlight;
-  tintShader.setUniform('u_light', light);
-  tintShader.setUniform('u_hazeColor', horizonColor());
-  const visibility = enabled && weather.visibility > 0 ? weather.visibility : null;
-  tintShader.setUniform('u_hazeDensity', clamp(visibility ? 1.6 / visibility : 1 / 18000, 1 / 18000, 1 / 120));
+  const tone = meshTone({
+    sunAltitude: astronomy?.sun.altitude ?? 45,
+    moonAltitude: astronomy?.moon.altitude ?? null,
+    moonFraction: astronomy?.moonIlluminatedFraction ?? 0,
+    clouds: enabled ? clamp((weather.cloudCover ?? 0) / 100, 0, 1) : 0,
+    visibility: enabled && weather.visibility > 0 ? weather.visibility : null,
+    precipitation: enabled && weather.renderPrecipitation ? (weather.rain ?? 0) + (weather.precipitation ?? 0) : 0,
+    snowDepth: state.snowCover ? 0.05 : enabled ? (weather.snowDepth ?? 0) : 0,
+  });
+  const vector = ([x, y, z]) => new C.Cartesian3(x, y, z);
+  tintShader.setUniform('u_light', vector(tone.light));
+  tintShader.setUniform('u_hazeColor', vector(tone.hazeColor));
+  for (const [name, value] of [['u_hazeDensity', tone.hazeDensity], ['u_cloudCover', tone.cloudCover],
+    ['u_cloudShadow', tone.cloudShadow], ['u_wet', tone.wet], ['u_snow', tone.snow], ['u_glow', tone.glow]]) {
+    tintShader.setUniform(name, value);
+  }
   const { at } = pinFrame();
   const pin = at(0, 0), east = at(1, 0), north = at(0, 1);
   tintShader.setUniform('u_pin', pin);
   tintShader.setUniform('u_east', C.Cartesian3.subtract(east, pin, new C.Cartesian3()));
   tintShader.setUniform('u_north', C.Cartesian3.subtract(north, pin, new C.Cartesian3()));
-  tintShader.setUniform('u_cloudCover', clouds);
-  const direct = sun && sun.altitude > 2 ? Math.pow(1 - clamp((clouds - 0.55) / 0.45, 0, 1), 1.5) : 0;
-  tintShader.setUniform('u_cloudShadow', 0.38 * direct);
-  const raining = enabled && weather.renderPrecipitation ? clamp(((weather.rain ?? 0) + (weather.precipitation ?? 0)) / 3, 0, 1) : 0;
-  tintShader.setUniform('u_wet', raining);
-  const depth = state.snowCover ? 0.05 : enabled ? (weather.snowDepth ?? 0) : 0;
-  tintShader.setUniform('u_snow', clamp(depth / 0.05, 0, 1) * 0.7);
-  tintShader.setUniform('u_glow', (1 - daylight) * 0.16);
 }
 
 function updateLightAndWeather() {
@@ -926,17 +811,51 @@ function refreshWeatherIfNeeded() {
   }
 }
 
+// Stop Cesium's render loop and the effects while the scene cannot be seen,
+// and pick both up again, with fresh weather, when it can.
+function applyActivity() {
+  if (!viewer) return;
+  const shown = sceneShown();
+  viewer.useDefaultRenderLoop = shown;
+  // Cesium's loop wakes on every display frame to check for changes even when
+  // it draws nothing; behind other apps, ten checks a second are plenty.
+  viewer.targetFrameRate = activity.active ? undefined : 10;
+  if (!shown) {
+    animationFrame?.cancel();
+    animationFrame = undefined;
+    return;
+  }
+  lastFrame = 0;
+  scheduleEffects();
+  refreshWeatherIfNeeded();
+  viewer.scene.requestRender();
+}
+
+function setActivity(next) {
+  activity = { visible: next?.visible !== false, active: next?.active !== false };
+  applyActivity();
+}
+
 function scheduleEffects() {
-  if (animationFrame || document.hidden) return;
+  if (animationFrame || !sceneShown()) return;
   const moving = state?.weatherEnabled && !state.reducedMotion && weather.kind !== 'missing';
   if (!moving) { drawEffects(0); return; }
-  animationFrame = requestAnimationFrame(time => {
+  const step = time => {
     animationFrame = undefined;
-    const delta = lastFrame ? clamp((time - lastFrame) / 1000, 0, 0.1) : 0;
+    const delta = lastFrame ? clamp((time - lastFrame) / 1000, 0, 0.25) : 0;
     lastFrame = time;
     drawEffects(delta);
     scheduleEffects();
-  });
+  };
+  // Every display frame while the app is in front; about eight a second behind
+  // other apps, where smooth motion matters less than the power it costs.
+  if (activity.active) {
+    const id = requestAnimationFrame(step);
+    animationFrame = { cancel: () => cancelAnimationFrame(id) };
+  } else {
+    const id = setTimeout(() => step(performance.now()), 125);
+    animationFrame = { cancel: () => clearTimeout(id) };
+  }
 }
 
 // Foreground precipitation and haze are illustrative viewport effects. Clouds
@@ -1025,13 +944,14 @@ function drawEffects(delta) {
     cloudStage.uniforms.cloudOffset = new C.Cartesian2(cloudDrift.x, cloudDrift.y);
     if (photoreal && tintShader) tintShader.setUniform('u_cloudOffset', new C.Cartesian2(cloudDrift.x, cloudDrift.y));
     const now = performance.now();
-    if ((weather.cloudCover ?? 0) > 5 && now - lastSkyRender > 120) { lastSkyRender = now; viewer.scene.requestRender(); }
+    if ((weather.cloudCover ?? 0) > 5 && now - lastSkyRender > (activity.active ? 125 : 500)) { lastSkyRender = now; viewer.scene.requestRender(); }
   }
-  // Keep the flag waving. The 3D scene otherwise renders only on demand, so
-  // ask for a frame about twenty times a second while there is wind to show.
+  // Keep the flag waving. The 3D scene otherwise renders only on demand, and
+  // each frame redraws the whole mesh, so ask for about ten frames a second
+  // while the app is in front and four while it is in the background.
   if (photoreal && delta > 0 && !state.reducedMotion && flagExtension(wind, weather.windDirection) > 0) {
     const now = performance.now();
-    if (now - lastFlagRender > 50) { lastFlagRender = now; viewer.scene.requestRender(); }
+    if (now - lastFlagRender > (activity.active ? 100 : 250)) { lastFlagRender = now; flag.draw(true); viewer.scene.requestRender(); }
   }
 }
 
@@ -1043,7 +963,7 @@ function update(next) {
       || Math.abs(next.latitude) > 90 || Math.abs(next.longitude) > 180
       || !Number.isFinite(new Date(next.time).getTime())) return;
   const previous = state;
-  state = { weatherEnabled: true, snowCover: false, reducedMotion: false, computedShadows: false, detail: 'balanced', ionToken: '', ...next };
+  state = { weatherEnabled: true, snowCover: false, reducedMotion: false, computedShadows: false, diagnostics: false, detail: 'balanced', ionToken: '', ...next };
   state.time = new Date(state.time).toISOString();
   // Without a valid interval, use the 24 hours around the selected instant.
   const instant = Date.parse(state.time), from = Date.parse(state.start), until = Date.parse(state.end);
@@ -1064,6 +984,7 @@ function update(next) {
   // Atmospheric scattering controls twilight fading; hide the texture in daylight.
   // The underlying Cesium skybox rotates with sidereal time, not with the camera.
   if (viewer.scene.skyBox) viewer.scene.skyBox.show = astronomy.sun.altitude < -4;
+  diagnostics?.setEnabled(!!state.diagnostics);
   if (previous?.detail !== state.detail) {
     viewer.resolutionScale = state.detail === 'low' ? 0.75 : 1;
     viewer.scene.globe.maximumScreenSpaceError = state.detail === 'low' ? 4 : state.detail === 'high' ? 1 : 2;
@@ -1089,7 +1010,7 @@ function update(next) {
   postStatus();
 }
 
-window.whenScape = { update,
+window.whenScape = { update, setActivity,
   faceNorth() { heading = 0; setCamera(); },
   retryWeather() { lastWeatherKey = undefined; queueWeather(); },
 };

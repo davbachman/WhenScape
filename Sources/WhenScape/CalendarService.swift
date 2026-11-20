@@ -30,7 +30,7 @@ final class CalendarService: ObservableObject {
     @Published private(set) var authorization = EKEventStore.authorizationStatus(for: .event)
     @Published private(set) var isRequestingAccess = false
     @Published private(set) var errorMessage: String?
-    @Published var hiddenCalendarIDs: Set<String> = []
+    @Published var hiddenCalendarIDs = Preferences.strings(.hiddenCalendars) { didSet { Preferences.set(hiddenCalendarIDs, .hiddenCalendars) } }
 
     private let store = EKEventStore()
 

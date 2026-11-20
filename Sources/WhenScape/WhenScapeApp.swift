@@ -329,6 +329,10 @@ struct SettingsView: View {
                 Toggle("Computed shadows on the 3D mesh", isOn: $model.computedShadows)
                 Text("The photorealistic mesh already shows the shadows from when it was photographed, and they cannot be removed. This adds shadows that follow the calculated Sun, so both sets appear. It also costs some performance.").font(.caption).foregroundStyle(.secondary)
             }
+            Section("Developer") {
+                Toggle("Show scene diagnostics", isOn: $model.sceneDiagnostics)
+                Text("Shows camera, ground and tile readings over the 3D scene, and lets Safari’s Web Inspector attach to it (Develop menu › this Mac › WhenScape).").font(.caption).foregroundStyle(.secondary)
+            }
             Section("Data & privacy") {
                 Text("Calendar access is read-only within WhenScape. Event titles, notes and attendees stay on your Mac. Place searches go to Apple; coordinates and requested times go to map and weather providers.")
                 Text("Astronomy is calculated. Weather uses forecasts, historical estimates, or a five-year seasonal baseline. Buildings may have estimated heights or missing geometry; the scene is not a historical reconstruction.")

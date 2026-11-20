@@ -11,6 +11,19 @@ jobs:
           cache: npm
       - name: Build and test native app and scene
         run: bash scripts/build-macos.sh
+        env:
+          WHENSCAPE_SIGN_IDENTITY: "-"
+      - name: Install browser for scene tests
+        run: npx playwright install chromium
+      - name: Browser tests of the scene
+        run: |
+          node scripts/preview.mjs &
+          preview=$!
+          for i in $(seq 30); do curl -sf http://127.0.0.1:4173/ >/dev/null && break; sleep 1; done
+          status=0
+          npm run test:browser || status=$?
+          kill $preview
+          exit $status
       - name: Package app
         run: |
           app_path="$(cd build/WhenScape.app && pwd -P)"
