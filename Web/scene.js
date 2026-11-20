@@ -1092,10 +1092,10 @@ function drawEffects(delta) {
   if (weather.renderPrecipitation) {
     const snow = weather.snowfall ?? 0;
     const rain = weather.rain ?? 0;
-    // Rain is sparse and fine: enough streaks to read as rain without hiding
-    // the place. Their number grows with the square root of the rate, so a
+    // Enough streaks to read clearly as rain, still fine enough to see the
+    // place through. Their number grows with the square root of the rate, so a
     // downpour looks heavier than a drizzle without becoming a curtain.
-    const count = Math.min(state.detail === 'low' ? 80 : 200, Math.ceil(snow * 65 + 16 * Math.sqrt(rain)));
+    const count = Math.min(state.detail === 'low' ? 110 : 260, Math.ceil(snow * 65 + 45 * Math.sqrt(rain)));
     const snowFraction = snow + rain > 0 ? snow / (snow + rain) : 0;
     // In the aerial view, drops move the way falling rain would look from this
     // camera: project one second of fall and wind drift at the pin onto the screen.
@@ -1119,13 +1119,13 @@ function drawEffects(delta) {
         const near = 1 + depth * 5;
         const x = mod(seed * width + weatherClock * fall.x * near, width + 40) - 20;
         const y = mod(hash(i + 400) * height + weatherClock * fall.y * near, height + 45) - 20;
-        ctx.globalAlpha = (isSnow ? 0.25 + depth * 0.6 : 0.12 + depth * 0.33) * (0.35 + daylight * 0.65);
+        ctx.globalAlpha = (isSnow ? 0.25 + depth * 0.6 : 0.2 + depth * 0.42) * (0.35 + daylight * 0.65);
         if (isSnow) {
           ctx.fillStyle = '#edf4fa'; ctx.beginPath();
           ctx.arc(x + Math.sin(weatherClock * 1.5 + i) * 5, y, 0.8 + depth * 2.2, 0, Math.PI * 2); ctx.fill();
         } else {
-          const length = Math.max(Math.hypot(fall.x, fall.y), 1), streak = 5 + depth * 12;
-          ctx.strokeStyle = '#cddbe8'; ctx.lineWidth = 0.35 + depth * 0.45;
+          const length = Math.max(Math.hypot(fall.x, fall.y), 1), streak = 6 + depth * 15;
+          ctx.strokeStyle = '#cddbe8'; ctx.lineWidth = 0.5 + depth * 0.6;
           ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + fall.x / length * streak, y + fall.y / length * streak); ctx.stroke();
         }
         continue;
@@ -1133,12 +1133,12 @@ function drawEffects(delta) {
       const speed = isSnow ? 25 + depth * 55 : 350 + depth * 550;
       const x = mod(seed * width + weatherClock * drift * 9 * depth - heading * width * depth, width + 40) - 20;
       const y = mod(hash(i + 400) * height + weatherClock * speed + (photoreal ? dronePitch : pitch) * height * depth, height + 45) - 20;
-      ctx.globalAlpha = (isSnow ? 0.25 + depth * 0.6 : 0.12 + depth * 0.33) * (0.35 + daylight * 0.65);
+      ctx.globalAlpha = (isSnow ? 0.25 + depth * 0.6 : 0.2 + depth * 0.42) * (0.35 + daylight * 0.65);
       if (isSnow) {
         ctx.fillStyle = '#edf4fa'; ctx.beginPath();
         ctx.arc(x + Math.sin(weatherClock * 1.5 + i) * 7, y, 0.8 + depth * 2.2, 0, Math.PI * 2); ctx.fill();
       } else {
-        ctx.strokeStyle = '#cddbe8'; ctx.lineWidth = 0.35 + depth * 0.45;
+        ctx.strokeStyle = '#cddbe8'; ctx.lineWidth = 0.5 + depth * 0.6;
         ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + drift * 0.45, y + 8 + depth * 18); ctx.stroke();
       }
     }
