@@ -50,6 +50,7 @@ test('the summary is one sentence', () => {
   const start = 1000 * hour;
   const sun = { time: start, start, end: start + 2 * hour, rangeEnabled: true, sunset: start + 40 * minute, sunUpAtStart: true };
   assert.equal(summaryLine({ weather, units: us, sun }), 'Partly cloudy, 62°, light west wind; sunset 40 minutes into the event.');
+  assert.equal(summaryLine({ weather, units: us, sun, headline: false }), 'Light west wind; sunset 40 minutes into the event.');
   assert.equal(summaryLine({ weather: { ...weather, kind: 'seasonal', renderPrecipitation: false }, units: metric, sun: null }), 'Typically partly cloudy, 17°, light west wind.');
   assert.equal(summaryLine({ weather: { kind: 'missing' }, units: us, sun: { time: start, rangeEnabled: false, sunset: start + hour, sunUp: true } }), 'Sunset in 1 hour.');
   assert.equal(summaryLine({ weather: { kind: 'missing' }, units: us, sun: null }), '');

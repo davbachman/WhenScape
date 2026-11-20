@@ -28,6 +28,7 @@ final class AppModel: ObservableObject {
     @Published var snowCover = Preferences.bool(.snowCover, default: false) { didSet { Preferences.set(snowCover, .snowCover) } }
     @Published var reducedMotion = false
     @Published var computedShadows = Preferences.bool(.computedShadows, default: false) { didSet { Preferences.set(computedShadows, .computedShadows) } }
+    @Published var idleOrbit = Preferences.bool(.idleOrbit, default: true) { didSet { Preferences.set(idleOrbit, .idleOrbit) } }
     @Published var sceneDiagnostics = Preferences.bool(.sceneDiagnostics, default: false) { didSet { Preferences.set(sceneDiagnostics, .sceneDiagnostics) } }
     @Published var detail = Preferences.string(.detail, default: "balanced", allowed: ["low", "balanced", "high"]) { didSet { Preferences.set(detail, .detail) } }
     @Published var ionToken = TokenStore.read()
@@ -183,6 +184,18 @@ final class AppModel: ObservableObject {
         rangeEnabled = value
         if value { start = instant; end = instant.addingTimeInterval(3600) }
     }
+    /// A keyboard step through time: a quarter hour, or an hour with Shift.
+    /// Like the slider, it explores within the selected event rather than leaving it.
+    func step(minutes: Int, forward: Bool) {
+        guard !locationRequired else { return }
+        isPlaying = false
+        let next = ExplorationTime.stepped(instant, minutes: minutes, forward: forward, in: timeZone)
+        instant = rangeEnabled ? ExplorationTime.clamped(next, to: interval) : next
+    }
+    func togglePlayback() {
+        guard !locationRequired else { return }
+        if isPlaying { isPlaying = false } else { playbackDirection = 1; isPlaying = true }
+    }
     func tick() {
         guard isPlaying, !locationRequired else { return }
         instant = ExplorationTime.advancing(instant, by: playbackDirection * playbackSpeed * 0.1, in: interval)
@@ -200,7 +213,7 @@ final class AppModel: ObservableObject {
                 "time": formatter.string(from: instant), "start": formatter.string(from: interval.start),
                 "end": formatter.string(from: interval.end), "rangeEnabled": rangeEnabled,
                 "timeZone": timeZone.identifier, "weatherEnabled": weatherEnabled,
-                "snowCover": snowCover, "reducedMotion": reducedMotion, "computedShadows": computedShadows, "diagnostics": sceneDiagnostics, "detail": detail, "ionToken": ionToken]
+                "snowCover": snowCover, "reducedMotion": reducedMotion, "computedShadows": computedShadows, "diagnostics": sceneDiagnostics, "idleOrbit": idleOrbit, "detail": detail, "ionToken": ionToken]
     }
     func receiveSceneStatus(_ status: [String: Any]) {
         if let ready = status["ready"] as? Bool { sceneReady = ready }

@@ -7,7 +7,7 @@ const close = (actual, expected, tolerance = 1e-9) =>
 
 test('the mesh is shown as photographed in clear daylight and dark blue at night', () => {
   close(meshLight(45, 0), [1, 1, 1]);
-  close(meshLight(-30, 0), [0.03, 0.04, 0.075]);
+  close(meshLight(-30, 0), [0.045, 0.058, 0.1]);
 });
 
 test('low sun warms the light and cloud dims it', () => {

@@ -5,7 +5,7 @@ import Foundation
 /// it stays in the Keychain.
 enum Preferences {
     enum Key: String {
-        case weatherEnabled, snowCover, computedShadows, detail, playbackSpeed, hiddenCalendars, sceneDiagnostics
+        case weatherEnabled, snowCover, computedShadows, detail, playbackSpeed, hiddenCalendars, sceneDiagnostics, idleOrbit
         case placeLatitude, placeLongitude, placeName, placeTimeZone
     }
 

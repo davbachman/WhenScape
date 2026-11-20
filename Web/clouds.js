@@ -94,8 +94,12 @@ void main() {
     sky += warm * (pow(towardSun, 8.0) * mix(0.10, 0.30, twilight) + pow(towardSun, 96.0) * 0.45) * (day * 0.6 + twilight) * clearSun;
     float disc = smoothstep(0.99990, 0.99996, towardSun) * step(-0.02, sunHeight) * clearSun;
 
-    // Stars and the Moon come from Cesium's own night sky.
-    sky += sceneColor.rgb * night * (1.0 - 0.9 * overcast) * (1.0 - clamp(haze, 0.0, 1.0));
+    // Stars and the Moon come from Cesium's own sky, behind this painted one
+    // (its atmosphere is hidden). Stars are drawn only after dark; the Moon
+    // shows whenever it is up: a pale disc against the day sky, bright at night,
+    // where the stars are brightened to give a real field of them.
+    float clearView = (1.0 - 0.9 * overcast) * (1.0 - clamp(haze, 0.0, 1.0));
+    sky += min(sceneColor.rgb * mix(1.25, 1.8, night), vec3(1.0)) * clearView;
 
     // Low clouds on a flat layer overhead. The pattern is fixed to compass
     // directions, drifts with the wind, and compresses toward the horizon.

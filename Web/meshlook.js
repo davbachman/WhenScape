@@ -27,7 +27,12 @@ void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material) {
   vec3 photo = material.diffuse;
   float brightness = dot(photo, vec3(0.299, 0.587, 0.114));
   vec3 color = mix(photo, vec3(0.92, 0.94, 0.97), u_snow);
-  color *= 1.0 - 0.14 * u_wet;
+  // Wet ground darkens, and grey surfaces such as roads and paving pick up a
+  // sheen of the sky's colour, as wet asphalt does.
+  float chroma = max(photo.r, max(photo.g, photo.b)) - min(photo.r, min(photo.g, photo.b));
+  float paving = 1.0 - smoothstep(0.05, 0.18, chroma);
+  color *= 1.0 - 0.2 * u_wet;
+  color = mix(color, u_hazeColor, u_wet * 0.24 * paving * (1.0 - brightness));
   // Under heavy cloud the light is flat: less colour, not just less light.
   color = mix(color, vec3(dot(color, vec3(0.299, 0.587, 0.114))), 0.3 * smoothstep(0.55, 1.0, u_cloudCover));
   // The cloud pattern repeats the sky stage's, laid over the ground at the
@@ -39,7 +44,8 @@ void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material) {
   color *= 1.0 - u_cloudShadow * shadow;
   color *= u_light;
   // After dark, pale surfaces pick up a warm tone, as if lit by lamps.
-  color += u_glow * vec3(1.0, 0.78, 0.5) * smoothstep(0.35, 0.8, brightness) * photo;
+  // Most of the glow falls on grey paving, where street lamps would be.
+  color += u_glow * vec3(1.0, 0.74, 0.44) * smoothstep(0.22, 0.7, brightness) * (0.35 + 0.65 * paving) * photo;
   float distance = length(fsInput.attributes.positionEC);
   material.diffuse = mix(color, u_hazeColor, 1.0 - exp(-distance * u_hazeDensity));
 }`;
@@ -88,7 +94,8 @@ export function meshLight(sunAltitude, clouds) {
     const base = night + (day - night) * daylight;
     return (base + (warm - base) * warmth * 0.6) * (1 - clouds * 0.2 * daylight);
   };
-  return [mix(0.03, 1, 1.0), mix(0.04, 1, 0.76), mix(0.075, 1, 0.56)];
+  // Night is a deep blue, lifted enough that streets and roofs still read.
+  return [mix(0.045, 1, 1.0), mix(0.058, 1, 0.76), mix(0.1, 1, 0.56)];
 }
 
 /** Approximate sky colour at the horizon, matching the painted sky, as [r, g, b]. */
@@ -115,7 +122,7 @@ export function meshTone({ sunAltitude = 45, moonAltitude = null, moonFraction =
   // Moonlight lifts the night a little, more for a fuller, higher Moon.
   const moonlight = moonAltitude > 0 ? clamp(Math.sin(moonAltitude * Math.PI / 180) * 2.5, 0, 1) *
     moonFraction * (1 - daylight) * (1 - clouds * 0.8) : 0;
-  light[0] += 0.05 * moonlight; light[1] += 0.065 * moonlight; light[2] += 0.10 * moonlight;
+  light[0] += 0.07 * moonlight; light[1] += 0.095 * moonlight; light[2] += 0.15 * moonlight;
   const direct = sunAltitude > 2 ? Math.pow(1 - clamp((clouds - 0.55) / 0.45, 0, 1), 1.5) : 0;
   return {
     light,
@@ -125,6 +132,6 @@ export function meshTone({ sunAltitude = 45, moonAltitude = null, moonFraction =
     cloudShadow: 0.38 * direct,
     wet: clamp(precipitation / 3, 0, 1),
     snow: clamp(snowDepth / 0.05, 0, 1) * 0.7,
-    glow: (1 - daylight) * 0.16,
+    glow: (1 - daylight) * 0.3,
   };
 }

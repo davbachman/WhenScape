@@ -36,8 +36,10 @@ export function createGuides(C, viewer) {
     // mesh breaks it up across roofs and trees; where it passes behind them
     // it is drawn faintly instead.
     lines.add(line(ringPoints(radius).map(p => at(p.e, p.n, 1.5)), 2, C.Color.WHITE.withAlpha(0.8), C.Color.WHITE.withAlpha(0.28)));
+    // The letters stand well outside the ring, clear of the sunrise and
+    // sunset labels, which sit on the ring itself.
     for (const [name, bearing] of [['N', 0], ['E', 90], ['S', 180], ['W', 270]]) {
-      const p = domePoint(0, bearing, radius * 1.1);
+      const p = domePoint(0, bearing, radius * 1.3);
       labels.entities.add({ position: at(p.e, p.n, 1.5), label: { ...label(name, name === 'N' ? C.Color.fromCssColorString('#ffb27a') : C.Color.WHITE, 15),
         pixelOffset: C.Cartesian2.ZERO } });
     }
@@ -58,8 +60,10 @@ export function createGuides(C, viewer) {
     }
     for (const [name, sample] of [['Sunrise', track.sunrise], ['Sunset', track.sunset]]) {
       if (!sample) continue;
+      // Below the dot, so the text does not run along the ring into the letters or the arc.
       labels.entities.add({ position: dome(sample), point: { pixelSize: 7, color: ink, outlineColor: C.Color.BLACK.withAlpha(0.6), outlineWidth: 1,
-        disableDepthTestDistance: always }, label: label(zone ? `${name} ${clockLabel(sample.time, zone)}` : name, ink) });
+        disableDepthTestDistance: always }, label: { ...label(zone ? `${name} ${clockLabel(sample.time, zone)}` : name, ink, 11),
+        verticalOrigin: C.VerticalOrigin.TOP, pixelOffset: new C.Cartesian2(0, 9) } });
     }
     sunMarker = labels.entities.add({ point: { pixelSize: 15, color: C.Color.fromCssColorString('#fff3b0'), outlineColor: ink, outlineWidth: 3,
       disableDepthTestDistance: always } });

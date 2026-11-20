@@ -83,11 +83,13 @@ export function sunPhrase({ time, start, end, rangeEnabled, sunrise, sunset, sun
 }
 
 /** One sentence for the whole picture, e.g. "Partly cloudy, 62°, light west wind; sunset 40 minutes into the event." */
-export function summaryLine({ weather, units, sun }) {
+export function summaryLine({ weather, units, sun, headline = true }) {
   const parts = [];
   if (weather && weather.kind !== 'missing') {
-    parts.push(conditionName(weather));
-    const temperature = formatTemperature(weather.temperature, units);
+    // Without the headline, the condition and temperature are left out for a
+    // place that already shows them, such as the folded conditions bar.
+    if (headline) parts.push(conditionName(weather));
+    const temperature = headline ? formatTemperature(weather.temperature, units) : null;
     if (temperature) parts.push(temperature);
     const wind = windPhrase(weather, units);
     if (wind) parts.push(wind);

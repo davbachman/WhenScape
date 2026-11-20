@@ -41,13 +41,16 @@ const weatherFor = (kind, time) => page.waitForFunction(([kind, time]) => {
 try {
   await page.goto('http://127.0.0.1:4173', { waitUntil: 'networkidle' });
   await page.waitForFunction(() => window.whenScapeStatus?.ready);
+  // The conditions bar folds to one line; a click pins its details open.
+  await page.locator('#weather-summary').click();
+  assert.equal(await page.locator('.conditions').evaluate(bar => bar.classList.contains('pinned')), true);
   assert.equal(await page.locator('#fatal-message').isVisible(), false);
   assert.match(await page.locator('#geometry-status').textContent(), /not loaded/);
   await page.waitForFunction(() => window.whenScapeStatus?.weather?.kind === 'forecast');
   assert.match(await page.locator('#weather-summary').textContent(), /Rain/);
   assert.equal(await page.locator('#wind-line').isVisible(), true);
   await page.locator('#scene').focus();
-  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Alt+ArrowRight');
   await page.waitForTimeout(300);
   assert.match(await page.locator('#heading').textContent(), /2°/);
   await page.locator('#compass').click();
@@ -98,7 +101,36 @@ try {
   await page.evaluate(state => window.whenScape.update(state), state);
   await page.waitForTimeout(300);
   assert.ok((await page.evaluate(() => window.whenScapeStatus.sunAltitude)) < -18);
+
+  // At this hour the Sun is down and the nearly full Moon is low in the south.
+  // Its finder turns the view to it with a narrow lens, and it must be lit
+  // after dark; scrolling out widens the lens again, so it shrinks.
+  assert.equal(await page.locator('#find-sun').isDisabled(), true);
+  await page.locator('#find-moon').click();
+  await page.waitForTimeout(300);
+  const facing = Number((await page.locator('#heading').textContent()).match(/(\d+)°/)[1]);
+  assert.ok(facing > 120 && facing < 240, `expected to face the Moon in the south, not ${facing}°`);
+  await page.addStyleTag({ content: '#setup-message { display: none !important; }' });
+  const moonPixels = async () => {
+    await page.waitForTimeout(300);
+    const shot = await page.locator('#scene').screenshot();
+    return page.evaluate(async data => {
+      const bitmap = await createImageBitmap(new Blob([new Uint8Array(data)], { type: 'image/png' }));
+      const context = new OffscreenCanvas(bitmap.width, bitmap.height).getContext('2d');
+      context.drawImage(bitmap, 0, 0);
+      const pixels = context.getImageData(bitmap.width / 2 - 60, bitmap.height / 2 - 60, 120, 120).data;
+      let bright = 0;
+      for (let i = 0; i < pixels.length; i += 4) if (0.3 * pixels[i] + 0.59 * pixels[i + 1] + 0.11 * pixels[i + 2] > 150) bright++;
+      return bright;
+    }, [...shot]);
+  };
+  const close = await moonPixels();
+  assert.ok(close > 300, `the Moon should fill the narrow lens, brightly; ${close} bright pixels`);
+  for (let i = 0; i < 4; i++) await page.locator('#scene canvas').first().dispatchEvent('wheel', { deltaY: 200 });
+  const wide = await moonPixels();
+  assert.ok(wide < close / 3, `scrolling out should widen the lens; ${close} then ${wide} bright pixels`);
+
   assert.equal(await page.locator('#fatal-message').isVisible(), false);
   assert.deepEqual(errors, []);
-  console.log('Browser checks passed: startup, real-data setup state, rotation, compass, daylight/night, clear sky, rain, snow, seasonal mode, no foreground cloud sheet, and no page errors. Weather responses were fixtures.');
+  console.log('Browser checks passed: startup, real-data setup state, rotation, compass, daylight/night, clear sky, rain, snow, seasonal mode, no foreground cloud sheet, Sun and Moon finders, a lit night Moon, lens zoom, and no page errors. Weather responses were fixtures.');
 } finally { await browser.close(); }

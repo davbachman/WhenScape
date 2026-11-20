@@ -103,6 +103,7 @@ function createViewer() {
   // Cesium's Moon is a sun-lit ellipsoid, so its visible phase changes with time.
   // Its celestial axes and the skybox's TEME transform use this same scene clock.
   if (viewer.scene.moon) viewer.scene.moon.onlySunLighting = true;
+  lightMoonBySun(viewer.scene.moon);
   viewer.scene.shadowMap.maximumDistance = 1800;
   viewer.scene.shadowMap.softShadows = true;
   viewer.scene.skyAtmosphere.setDynamicLighting(C.DynamicAtmosphereLightingType?.SUNLIGHT ?? 2);
@@ -123,10 +124,58 @@ function createViewer() {
   resize();
   new ResizeObserver(resize).observe($('scene'));
   // Do not let focus leave the viewport when keyboard arrows rotate it.
-  $('compass').addEventListener('click', () => { heading = 0; setCamera(); });
+  $('compass').addEventListener('click', () => { noteInteraction(); heading = 0; setCamera(); });
+  $('find-sun').addEventListener('click', () => lookAtSky('sun'));
+  $('find-moon').addEventListener('click', () => lookAtSky('moon'));
   $('refresh-weather').addEventListener('click', () => { lastWeatherKey = undefined; queueWeather(); });
+  installConditionsPin();
   document.addEventListener('visibilitychange', applyActivity);
   setInterval(() => { if (sceneShown()) refreshWeatherIfNeeded(); }, 60_000);
+  setInterval(checkIdleOrbit, 1000);
+}
+
+// A click on the conditions bar keeps its details open (or lets it fold back
+// to one line); the choice is remembered. Links and buttons inside work as usual.
+function installConditionsPin() {
+  const bar = document.querySelector('.conditions');
+  const key = 'whenscape.conditionsPinned';
+  try { bar.classList.toggle('pinned', localStorage.getItem(key) === '1'); } catch {}
+  bar.addEventListener('click', event => {
+    if (event.target.closest('a, button, summary, details')) return;
+    const pinned = bar.classList.toggle('pinned');
+    bar.title = pinned ? 'Click to fold the details away' : 'Click to keep the details open';
+    try { localStorage.setItem(key, pinned ? '1' : '0'); } catch {}
+  });
+}
+
+// Cesium lights its Moon with the scene light, which is dimmed after dark to
+// darken the globe and plain buildings, so the Moon faded at night just when
+// it should be brightest. This material lights it by the Sun's direction alone,
+// at a fixed strength, keeping its phase. Lunar dust scatters light so that the
+// lit face stays nearly as bright out to the limb (the Lommel-Seeliger law),
+// with a crisp terminator. It replaces the material of the Moon's internal
+// ellipsoid; if a Cesium update renames that, the Moon keeps Cesium's own lighting.
+function lightMoonBySun(moon) {
+  const body = moon?._ellipsoidPrimitive;
+  if (!body?.material) return;
+  body.material = new C.Material({
+    translucent: false,
+    fabric: {
+      uniforms: { image: moon.textureUrl },
+      source: `czm_material czm_getMaterial(czm_materialInput materialInput) {
+        czm_material material = czm_getDefaultMaterial(materialInput);
+        vec3 normal = normalize(materialInput.normalEC);
+        float toSun = max(dot(normal, czm_sunDirectionEC), 0.0);
+        float toEye = max(dot(normal, normalize(materialInput.positionToEyeEC)), 0.0);
+        float lit = 2.0 * toSun / max(toSun + toEye, 1e-3);
+        material.diffuse = vec3(0.0);
+        // The sky stage brightens what shows through it after dark; at this
+        // strength the full Moon stays just short of white, so its seas show.
+        material.emission = texture(image, materialInput.st).rgb * min(lit, 1.0) * 0.5;
+        return material;
+      }`,
+    },
+  });
 }
 
 function prepareStarTextures() {
@@ -164,6 +213,7 @@ function installRotation() {
   canvas.style.touchAction = 'none';
   canvas.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
+    noteInteraction();
     // In the aerial view a sideways drag turns the scene like a turntable:
     // grabbing below the pin moves the near side, so the turn is reversed.
     pointer = { id: e.pointerId, x: e.clientX, y: e.clientY, turn: photoreal && belowPin(e) ? -1 : 1 };
@@ -174,8 +224,9 @@ function installRotation() {
     if (!pointer || pointer.id !== e.pointerId) return;
     heading -= (e.clientX - pointer.x) * 0.003 * pointer.turn;
     const tilt = (e.clientY - pointer.y) * 0.003;
-    // In the aerial view, dragging down lifts the camera toward a top-down view.
-    if (photoreal) dronePitch = clamp(dronePitch - tilt, droneLimits.minPitch, droneLimits.maxPitch);
+    // In the aerial view, dragging down lifts the camera toward a top-down view;
+    // dragging up flattens it and then raises the gaze into the sky.
+    if (photoreal) raiseGaze(-tilt);
     else pitch = clamp(pitch + tilt, -Math.PI / 2 + 0.02, Math.PI / 2 - 0.02);
     pointer.x = e.clientX; pointer.y = e.clientY;
     setCamera();
@@ -186,17 +237,25 @@ function installRotation() {
   canvas.addEventListener('lostpointercapture', end);
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   canvas.addEventListener('wheel', e => {
+    noteInteraction();
     e.preventDefault();
-    if (!photoreal) return;
-    droneRange = clamp(droneRange * Math.exp(clamp(e.deltaY, -200, 200) * 0.002), droneLimits.minRange, droneLimits.maxRange);
+    const factor = Math.exp(clamp(e.deltaY, -200, 200) * 0.002);
+    // From the ground, or looking up from the air, scrolling zooms the lens
+    // like a telephoto; otherwise it moves the orbit in or out.
+    if (!photoreal || lookingUp()) setFov(viewer.camera.frustum.fov * factor);
+    else droneRange = clamp(droneRange * factor, droneLimits.minRange, droneLimits.maxRange);
     setCamera();
   }, { passive: false });
   $('scene').addEventListener('keydown', e => {
+    noteInteraction();
     const amount = e.shiftKey ? 0.12 : 0.035;
-    if (e.key === 'ArrowLeft') heading -= amount;
-    else if (e.key === 'ArrowRight') heading += amount;
-    else if (photoreal && e.key === 'ArrowUp') dronePitch = Math.max(dronePitch - amount, droneLimits.minPitch);
-    else if (photoreal && e.key === 'ArrowDown') dronePitch = Math.min(dronePitch + amount, droneLimits.maxPitch);
+    // Plain ← and → step through time (handled by the app); with Option they turn the view.
+    if (e.key === 'ArrowLeft' && e.altKey) heading -= amount;
+    else if (e.key === 'ArrowRight' && e.altKey) heading += amount;
+    else if (photoreal && e.key === 'ArrowUp') raiseGaze(amount);
+    else if (photoreal && e.key === 'ArrowDown') raiseGaze(-amount);
+    else if ((!photoreal || lookingUp()) && (e.key === '+' || e.key === '=')) setFov(viewer.camera.frustum.fov / 1.15);
+    else if ((!photoreal || lookingUp()) && (e.key === '-' || e.key === '_')) setFov(viewer.camera.frustum.fov * 1.15);
     else if (photoreal && (e.key === '+' || e.key === '=')) droneRange = Math.max(droneRange / 1.15, droneLimits.minRange);
     else if (photoreal && (e.key === '-' || e.key === '_')) droneRange = Math.min(droneRange * 1.15, droneLimits.maxRange);
     else if (e.key === 'ArrowUp') pitch = Math.min(pitch + amount, Math.PI / 2 - 0.02);
@@ -212,17 +271,151 @@ function belowPin(e) {
   const rect = viewer.canvas.getBoundingClientRect();
   const pin = state && C.SceneTransforms.worldToWindowCoordinates(viewer.scene,
     C.Cartesian3.fromDegrees(state.longitude, state.latitude, eyeHeight - 1.7));
-  return e.clientY - rect.top > (pin ? pin.y : rect.height / 2);
+  // Looking up, the pin can be out of view entirely; everything seen is then above it.
+  if (!pin) return skyTilt > 0 ? false : e.clientY - rect.top > rect.height / 2;
+  return e.clientY - rect.top > pin.y;
+}
+
+// Looking up from the orbit. Tilting past the orbit's flattest angle keeps the
+// camera where it is and raises its gaze, bringing the sky, stars and Moon into
+// view; tilting back lowers the gaze to the pin before the orbit rises again.
+// skyTilt is how far the gaze is raised above the orbit's own angle, in radians.
+let skyTilt = 0;
+const DEFAULT_FOV = Math.PI / 3, TELEPHOTO_FOV = 6 * Math.PI / 180, MOON_FOV = 12 * Math.PI / 180;
+const lookingUp = () => skyTilt > 0.02;
+// A new place or view starts with the gaze on the pin and the normal lens.
+function resetGaze() {
+  aim = undefined;
+  skyTilt = 0;
+  if (viewer) viewer.camera.frustum.fov = DEFAULT_FOV;
+}
+function flattestOrbitPitch() {
+  return Math.min(droneLimits.maxPitch, -Math.asin(Math.min(1, droneLimits.minHeight / droneRange)));
+}
+function raiseGaze(amount) {
+  if (amount > 0) {
+    const orbit = Math.min(amount, Math.max(0, flattestOrbitPitch() - dronePitch));
+    dronePitch += orbit;
+    // The gaze stops short of the zenith, where heading would lose its meaning.
+    skyTilt = Math.min(skyTilt + amount - orbit, 85 * Math.PI / 180 - dronePitch);
+  } else {
+    const back = Math.min(-amount, skyTilt);
+    skyTilt -= back;
+    dronePitch = Math.max(dronePitch + amount + back, droneLimits.minPitch);
+  }
+  // Back on the pin, the lens returns to normal.
+  if (!lookingUp()) setFov(DEFAULT_FOV);
+}
+// Turn smoothly to the Sun or the Moon at its calculated position, raising the
+// gaze to its altitude. For the Moon the lens also narrows, since at its true
+// size, about half a degree, it would be a speck in the normal view.
+let aim;
+function lookAtSky(body) {
+  const target = astronomy?.[body];
+  if (!viewer || !target || target.altitude <= 0) return;
+  noteInteraction();
+  const radians = degrees => degrees * Math.PI / 180;
+  const from = { heading, dronePitch, skyTilt, pitch, fov: viewer.camera.frustum.fov };
+  const turn = ((radians(target.azimuth) - heading) % (2 * Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
+  const flattest = flattestOrbitPitch();
+  const altitude = Math.min(radians(target.altitude), radians(85));
+  const to = { dronePitch: flattest, skyTilt: Math.max(0, altitude - flattest), pitch: altitude,
+    fov: body === 'moon' ? MOON_FOV : DEFAULT_FOV };
+  const id = {}, start = performance.now(), duration = state?.reducedMotion ? 0 : 1600;
+  aim = id;
+  const step = now => {
+    if (aim !== id || !viewer) return;
+    const t = duration ? Math.min(1, (now - start) / duration) : 1;
+    const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    const between = name => from[name] + (to[name] - from[name]) * ease;
+    heading = from.heading + turn * ease;
+    if (photoreal) { dronePitch = between('dronePitch'); skyTilt = between('skyTilt'); }
+    else pitch = between('pitch');
+    viewer.camera.frustum.fov = between('fov');
+    setCamera();
+    if (t < 1) requestAnimationFrame(step); else aim = undefined;
+  };
+  requestAnimationFrame(step);
+}
+
+// The finders work only for a body above the horizon.
+function updateFinders() {
+  for (const body of ['sun', 'moon']) {
+    const button = $(`find-${body}`), name = body === 'sun' ? 'Sun' : 'Moon';
+    const up = (astronomy?.[body]?.altitude ?? -1) > 0;
+    button.disabled = !up;
+    button.title = up ? `Look at the ${name}` : `The ${name} is below the horizon`;
+  }
+}
+
+function setFov(value) {
+  viewer.camera.frustum.fov = clamp(value, TELEPHOTO_FOV, DEFAULT_FOV);
+  viewer.scene.requestRender();
+}
+
+// Flying to a new place: the camera travels from the old orbit to the same
+// orbit around the new pin, so a change of place reads as a journey rather
+// than a cut. Any drag, scroll or key press cancels it and takes over.
+let flight;
+function flyToPin(from) {
+  const start = C.Cartesian3.fromDegrees(from.longitude, from.latitude);
+  const end = C.Cartesian3.fromDegrees(state.longitude, state.latitude);
+  const distance = C.Cartesian3.distance(start, end);
+  if (!(distance > 5)) return;
+  noteInteraction();
+  const id = {};
+  flight = id;
+  const done = () => { if (flight === id) { flight = undefined; setCamera(); } };
+  viewer.camera.flyToBoundingSphere(new C.BoundingSphere(C.Cartesian3.fromDegrees(state.longitude, state.latitude, eyeHeight - 1.7), 0), {
+    offset: new C.HeadingPitchRange(heading, dronePitch, droneRange),
+    duration: clamp(1.2 + Math.log10(1 + distance / 400) * 1.1, 1.2, 4.5),
+    complete: done, cancel: done,
+  });
+}
+
+// When the aerial view is left alone for a while, it slowly circles the pin.
+// It runs only while the app is in front and its window can be seen, at a
+// capped frame rate, and stops at the first touch.
+const IDLE_ORBIT_AFTER = 30_000, IDLE_ORBIT_RATE = 2 * Math.PI / 180;
+let lastInteraction = performance.now(), orbitFrame, orbitLast = 0;
+function noteInteraction() {
+  lastInteraction = performance.now();
+  aim = undefined;
+  if (flight) { flight = undefined; viewer.camera.cancelFlight(); setCamera(); }
+  stopIdleOrbit();
+}
+function idleOrbitAllowed() {
+  return photoreal && !flight && state?.idleOrbit !== false && !state?.reducedMotion && activity.active && sceneShown();
+}
+function checkIdleOrbit() {
+  if (orbitFrame || !idleOrbitAllowed() || performance.now() - lastInteraction < IDLE_ORBIT_AFTER) return;
+  orbitLast = 0;
+  viewer.targetFrameRate = 30;
+  orbitFrame = requestAnimationFrame(orbitStep);
+}
+function orbitStep(time) {
+  orbitFrame = undefined;
+  if (!idleOrbitAllowed()) { stopIdleOrbit(); return; }
+  const delta = orbitLast ? Math.min((time - orbitLast) / 1000, 0.1) : 0;
+  orbitLast = time;
+  heading += IDLE_ORBIT_RATE * delta;
+  setCamera();
+  orbitFrame = requestAnimationFrame(orbitStep);
+}
+function stopIdleOrbit() {
+  if (orbitFrame) cancelAnimationFrame(orbitFrame);
+  orbitFrame = undefined;
+  if (viewer) viewer.targetFrameRate = activity.active ? undefined : 10;
 }
 
 function normalizeHeading() { return (((heading * 180 / Math.PI) % 360) + 360) % 360; }
 
 function updateViewLabels() {
   $('view-kind').textContent = photoreal ? 'AERIAL VIEW' : 'GROUND VIEW';
-  $('rotate-hint').textContent = photoreal ? 'Drag to orbit · scroll to zoom' : 'Drag to look · ↑ ↓ ← →';
+  $('rotate-hint').textContent = photoreal ? 'Drag to orbit, or up into the sky · scroll to zoom · ← → step time' : 'Drag to look · scroll to zoom · ← → step time';
   $('scene').setAttribute('aria-label', photoreal
-    ? 'Aerial view of the selected place. Drag or use arrow keys to orbit and tilt. Scroll or use plus and minus to zoom.'
-    : 'Ground-level scene. Drag to look around. Arrow keys rotate the view.');
+    ? 'Aerial view of the selected place. Drag, or use Option with the left and right arrow keys and the up and down arrow keys, to orbit and tilt; keep tilting up to look into the sky. Scroll or use plus and minus to zoom. Left and right arrow keys step through time.'
+    : 'Ground-level scene. Drag to look around, or use Option with the left and right arrow keys and the up and down arrow keys. Scroll or use plus and minus to zoom. Left and right arrow keys step through time.');
   updateFlag();
 }
 
@@ -234,8 +427,12 @@ function setCamera() {
     // A shallow tilt at a short range would put the camera among the trees, so
     // zooming in steepens the view enough to stay minHeight above the pin.
     dronePitch = Math.min(dronePitch, -Math.asin(Math.min(1, droneLimits.minHeight / droneRange)));
-    viewer.camera.lookAt(pin, new C.HeadingPitchRange(heading, dronePitch, droneRange));
-    viewer.camera.lookAtTransform(C.Matrix4.IDENTITY);
+    // During a flight to a new place the flight moves the camera; it lands here.
+    if (!flight) {
+      viewer.camera.lookAt(pin, new C.HeadingPitchRange(heading, dronePitch, droneRange));
+      viewer.camera.lookAtTransform(C.Matrix4.IDENTITY);
+      if (skyTilt > 0) viewer.camera.lookUp(skyTilt);
+    }
   } else {
     viewer.camera.setView({
       destination: C.Cartesian3.fromDegrees(state.longitude, state.latitude, eyeHeight),
@@ -388,6 +585,7 @@ function diagnosticRows() {
     ground: `${fixed(ground)} m`,
     readings: groundReadings.length ? groundReadings.map(h => fixed(h)).join(' ') : undefined,
     orbit: photoreal ? `range ${fixed(droneRange, 0)} m · pitch ${fixed(dronePitch * 180 / Math.PI)}° · heading ${fixed(normalizeHeading(), 0)}°` : undefined,
+    gaze: photoreal && skyTilt > 0 ? `raised ${fixed(skyTilt * 180 / Math.PI)}° · lens ${fixed(viewer.camera.frustum.fov * 180 / Math.PI, 0)}°` : undefined,
     look: photoreal ? undefined : `heading ${fixed(normalizeHeading(), 0)}° · pitch ${fixed(pitch * 180 / Math.PI)}°`,
     flag: photoreal ? `${fixed(flagHeight())} m` : undefined,
     globe: viewer.scene.globe ? `${viewer.scene.globe.show ? 'shown' : 'hidden'} · tiles ${viewer.scene.globe.tilesLoaded ? 'loaded' : 'loading'}` : 'removed',
@@ -461,6 +659,7 @@ async function loadGeography(token) {
   if (snowShader) { snowShader.destroy(); snowShader = undefined; }
   if (tintShader) { tintShader.destroy(); tintShader = undefined; }
   photoreal = false;
+  resetGaze();
   updateViewLabels();
   viewer.scene.globe.show = true;
   viewer.terrainProvider = new C.EllipsoidTerrainProvider();
@@ -503,6 +702,7 @@ async function loadGeography(token) {
   if (generation !== geometryGeneration) { mesh?.destroy(); return; }
   if (mesh) {
     photoreal = true;
+    resetGaze();
     updateViewLabels();
     // The mesh replaces the globe surface; drawing both makes them fight.
     viewer.scene.globe.show = false;
@@ -641,6 +841,10 @@ function updateLightAndWeather() {
   // The stage paints the whole sky, clear or cloudy, wherever depth is available.
   const paintedSky = viewer.scene.pickPositionSupported;
   cloudStage.enabled = paintedSky;
+  // The painted sky replaces Cesium's atmosphere; hiding it leaves only the
+  // Moon and stars behind the painted sky, so the Moon can show by day too.
+  viewer.scene.skyAtmosphere.show = !paintedSky;
+  updateFinders();
   if (paintedSky) {
     cloudStage.uniforms.cloudCover = clouds;
     const visibilityNow = enabled ? weather.visibility : null;
@@ -705,10 +909,13 @@ function updateWeatherHUD() {
   const day = ensureTrack(), now = Date.parse(state.time);
   const start = Date.parse(state.start), end = Date.parse(state.end);
   const ranged = !!state.rangeEnabled && end > start;
-  $('briefing').textContent = summaryLine({ weather: known ? weather : null, units, sun: {
+  const summary = { weather: known ? weather : null, units, sun: {
     time: now, start, end, rangeEnabled: ranged, sunrise: day.sunrise?.time, sunset: day.sunset?.time,
-    sunUpAtStart: ranged ? day.at(start).altitude > 0 : undefined, sunUp: astronomy.sun.altitude > 0 } });
+    sunUpAtStart: ranged ? day.at(start).altitude > 0 : undefined, sunUp: astronomy.sun.altitude > 0 } };
+  $('briefing').textContent = summaryLine(summary);
   $('briefing').hidden = !$('briefing').textContent;
+  $('briefing-short').textContent = summaryLine({ ...summary, headline: false });
+  $('briefing-short').hidden = !$('briefing-short').textContent;
 
   const wind = sky ? null : windReadout(weather, units);
   $('wind-line').hidden = !wind;
@@ -819,7 +1026,7 @@ function applyActivity() {
   viewer.useDefaultRenderLoop = shown;
   // Cesium's loop wakes on every display frame to check for changes even when
   // it draws nothing; behind other apps, ten checks a second are plenty.
-  viewer.targetFrameRate = activity.active ? undefined : 10;
+  viewer.targetFrameRate = orbitFrame ? 30 : activity.active ? undefined : 10;
   if (!shown) {
     animationFrame?.cancel();
     animationFrame = undefined;
@@ -884,7 +1091,10 @@ function drawEffects(delta) {
   if (weather.renderPrecipitation) {
     const snow = weather.snowfall ?? 0;
     const rain = weather.rain ?? 0;
-    const count = Math.min(state.detail === 'low' ? 90 : 240, Math.ceil(snow * 65 + rain * 24));
+    // Rain is sparse and fine: enough streaks to read as rain without hiding
+    // the place. Their number grows with the square root of the rate, so a
+    // downpour looks heavier than a drizzle without becoming a curtain.
+    const count = Math.min(state.detail === 'low' ? 80 : 200, Math.ceil(snow * 65 + 16 * Math.sqrt(rain)));
     const snowFraction = snow + rain > 0 ? snow / (snow + rain) : 0;
     // In the aerial view, drops move the way falling rain would look from this
     // camera: project one second of fall and wind drift at the pin onto the screen.
@@ -908,13 +1118,13 @@ function drawEffects(delta) {
         const near = 1 + depth * 5;
         const x = mod(seed * width + weatherClock * fall.x * near, width + 40) - 20;
         const y = mod(hash(i + 400) * height + weatherClock * fall.y * near, height + 45) - 20;
-        ctx.globalAlpha = (0.25 + depth * 0.6) * (0.35 + daylight * 0.65);
+        ctx.globalAlpha = (isSnow ? 0.25 + depth * 0.6 : 0.12 + depth * 0.33) * (0.35 + daylight * 0.65);
         if (isSnow) {
           ctx.fillStyle = '#edf4fa'; ctx.beginPath();
           ctx.arc(x + Math.sin(weatherClock * 1.5 + i) * 5, y, 0.8 + depth * 2.2, 0, Math.PI * 2); ctx.fill();
         } else {
-          const length = Math.max(Math.hypot(fall.x, fall.y), 1), streak = 6 + depth * 16;
-          ctx.strokeStyle = '#b9d0e5'; ctx.lineWidth = 0.5 + depth * 0.7;
+          const length = Math.max(Math.hypot(fall.x, fall.y), 1), streak = 5 + depth * 12;
+          ctx.strokeStyle = '#cddbe8'; ctx.lineWidth = 0.35 + depth * 0.45;
           ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + fall.x / length * streak, y + fall.y / length * streak); ctx.stroke();
         }
         continue;
@@ -922,12 +1132,12 @@ function drawEffects(delta) {
       const speed = isSnow ? 25 + depth * 55 : 350 + depth * 550;
       const x = mod(seed * width + weatherClock * drift * 9 * depth - heading * width * depth, width + 40) - 20;
       const y = mod(hash(i + 400) * height + weatherClock * speed + (photoreal ? dronePitch : pitch) * height * depth, height + 45) - 20;
-      ctx.globalAlpha = (0.25 + depth * 0.6) * (0.35 + daylight * 0.65);
+      ctx.globalAlpha = (isSnow ? 0.25 + depth * 0.6 : 0.12 + depth * 0.33) * (0.35 + daylight * 0.65);
       if (isSnow) {
         ctx.fillStyle = '#edf4fa'; ctx.beginPath();
         ctx.arc(x + Math.sin(weatherClock * 1.5 + i) * 7, y, 0.8 + depth * 2.2, 0, Math.PI * 2); ctx.fill();
       } else {
-        ctx.strokeStyle = '#b9d0e5'; ctx.lineWidth = 0.5 + depth * 0.7;
+        ctx.strokeStyle = '#cddbe8'; ctx.lineWidth = 0.35 + depth * 0.45;
         ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + drift * 0.45, y + 8 + depth * 18); ctx.stroke();
       }
     }
@@ -963,7 +1173,7 @@ function update(next) {
       || Math.abs(next.latitude) > 90 || Math.abs(next.longitude) > 180
       || !Number.isFinite(new Date(next.time).getTime())) return;
   const previous = state;
-  state = { weatherEnabled: true, snowCover: false, reducedMotion: false, computedShadows: false, diagnostics: false, detail: 'balanced', ionToken: '', ...next };
+  state = { weatherEnabled: true, snowCover: false, reducedMotion: false, computedShadows: false, diagnostics: false, idleOrbit: true, detail: 'balanced', ionToken: '', ...next };
   state.time = new Date(state.time).toISOString();
   // Without a valid interval, use the 24 hours around the selected instant.
   const instant = Date.parse(state.time), from = Date.parse(state.start), until = Date.parse(state.end);
@@ -983,7 +1193,8 @@ function update(next) {
   }
   // Atmospheric scattering controls twilight fading; hide the texture in daylight.
   // The underlying Cesium skybox rotates with sidereal time, not with the camera.
-  if (viewer.scene.skyBox) viewer.scene.skyBox.show = astronomy.sun.altitude < -4;
+  // Stars wait for nautical twilight, so they do not appear in a still-bright sky.
+  if (viewer.scene.skyBox) viewer.scene.skyBox.show = astronomy.sun.altitude < -9;
   diagnostics?.setEnabled(!!state.diagnostics);
   if (previous?.detail !== state.detail) {
     viewer.resolutionScale = state.detail === 'low' ? 0.75 : 1;
@@ -1001,6 +1212,8 @@ function update(next) {
       postStatus(true);
     });
   } else if (previous?.latitude !== state.latitude || previous?.longitude !== state.longitude) {
+    resetGaze();
+    if (photoreal && previous && !state.reducedMotion) flyToPin(previous);
     placeObserver();
   }
   updateLightAndWeather();

@@ -72,4 +72,28 @@ body:has(#weather-provenance[open]) #setup-message { visibility: hidden; }
 @media (prefers-reduced-transparency: reduce) { .glass { background: #1c2b38; backdrop-filter: none; } }
 .cesium-credit-logoContainer img { height: 16px !important; width: auto !important; opacity: 0.8; }
 /* Developer readout, shown only with the "Show scene diagnostics" setting. */
-.diagnostics { position: absolute; z-index: 5; top: 118px; right: 27px; margin: 0; padding: 9px 12px; max-width: min(460px, calc(100% - 54px)); overflow: hidden; font: 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #dfe7ee; white-space: pre; pointer-events: none; }
+.diagnostics { position: absolute; z-index: 5; top: 160px; right: 27px; margin: 0; padding: 9px 12px; max-width: min(460px, calc(100% - 54px)); overflow: hidden; font: 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #dfe7ee; white-space: pre; pointer-events: none; }
+/* The conditions bar is a single line until it is hovered, focused from the
+   keyboard or pinned open with a click, so the scene above it stays clear. */
+.conditions { cursor: pointer; transition: padding 0.18s ease; }
+.conditions:not(:hover, :focus-within, .pinned) { padding: 6px 14px; gap: 6px 16px; }
+.conditions:not(:hover, :focus-within, .pinned) :is(.eyebrow, #feels-like, #weather-detail, .facts, .weather-actions, .chart) { display: none; }
+.conditions:not(:hover, :focus-within, .pinned) #temperature { font-size: 22px; letter-spacing: -0.6px; }
+.conditions:not(:hover, :focus-within, .pinned) #weather-summary { font-size: 14px; }
+/* Folded, the bar says only what its large type does not. */
+#briefing-short { font-size: 12px; color: #eef1f4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conditions:not(:hover, :focus-within, .pinned) #briefing { display: none; }
+.conditions:is(:hover, :focus-within, .pinned) #briefing-short { display: none; }
+.conditions:is(:hover, :focus-within, .pinned) :is(.facts, .weather-actions, #weather-detail, .chart) { animation: reveal 0.2s ease-out; }
+.conditions.pinned { border-color: #ffffff3a; }
+@keyframes reveal { from { opacity: 0; transform: translateY(3px); } }
+@media (prefers-reduced-motion: reduce) { .conditions, .conditions * { animation: none !important; transition: none !important; } }
+/* Under the compass: turn to the Sun or the Moon. */
+.sky-tools { display: flex; flex-direction: column; gap: 6px; align-items: stretch; pointer-events: none; }
+.sky-finders { display: flex; gap: 6px; }
+.finder { pointer-events: auto; flex: 1; height: 32px; padding: 0; display: grid; place-items: center; color: inherit; cursor: pointer; }
+.finder svg { width: 18px; height: 18px; }
+.finder:hover:not(:disabled) { background: #263746e6; }
+.finder:disabled { cursor: default; }
+/* Only the icon dims, so the button keeps its glass over a bright scene. */
+.finder:disabled svg { opacity: 0.35; }

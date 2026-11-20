@@ -35,6 +35,7 @@ struct ContentView: View {
     @State private var sidebarWidth: CGFloat?
     @State private var previousSidebarWidth: CGFloat?
     @State private var dragStartWidth: CGFloat?
+    @State private var keyMonitor: Any?
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     private let timer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
@@ -58,8 +59,6 @@ struct ContentView: View {
             .frame(width: resolvedSidebarWidth(availableWidth: geometry.size.width))
             sidebarDivider(availableWidth: geometry.size.width)
             VStack(spacing: 0) {
-                sceneHeader
-                Divider()
                 ZStack {
                     CesiumView(model: model)
                     if model.locationRequired {
@@ -106,8 +105,38 @@ struct ContentView: View {
             }
         }
         .onReceive(timer) { _ in model.tick() }
+        .onAppear {
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                handleTimeKey(event) ? nil : event
+            }
+        }
+        .onDisappear { if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }; keyMonitor = nil }
         .onAppear { model.reducedMotion = systemReduceMotion }
         .onChange(of: systemReduceMotion) { _, value in model.reducedMotion = value }
+    }
+
+    /// ← and → step through time (Shift for an hour) and Space plays or pauses,
+    /// anywhere in the main window except where those keys already do something:
+    /// text and date fields, popovers and sheets, and Space on a focused button.
+    private func handleTimeKey(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function])
+        // Popovers and sheets cannot become the main window, so this keeps the
+        // keys to the app's window and out of a calendar popover or the settings.
+        guard flags.isEmpty || flags == .shift, let window = event.window, window.canBecomeMain,
+              window.attachedSheet == nil else { return false }
+        let responder = window.firstResponder
+        if responder is NSText || responder is NSTextField || responder is NSDatePicker { return false }
+        switch event.keyCode {
+        case 123, 124:
+            model.step(minutes: flags == .shift ? 60 : 15, forward: event.keyCode == 124)
+            return true
+        case 49:
+            guard flags.isEmpty, !(responder is NSButton) else { return false }
+            model.togglePlayback()
+            return true
+        default:
+            return false
+        }
     }
 
     private func resolvedSidebarWidth(availableWidth: CGFloat) -> CGFloat {
@@ -159,22 +188,6 @@ struct ContentView: View {
                 calendarExpanded = false
             }
     }
-
-    private var sceneHeader: some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(model.locationRequired ? "Location needed" : model.locationName).font(.title3.weight(.semibold)).lineLimit(1)
-                HStack(spacing: 5) {
-                    Image(systemName: "clock")
-                    Text(model.zoneLabel).lineLimit(1)
-                }.font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 8)
-            Toggle(isOn: $model.weatherEnabled) { Label("Weather", systemImage: "cloud.sun") }
-                .toggleStyle(.switch).controlSize(.small)
-                .help("Turn off weather to explore a clear astronomical sky")
-        }.padding(.horizontal, 20).padding(.vertical, 15)
-    }
 }
 
 @MainActor
@@ -200,8 +213,13 @@ struct TimeControls: View {
                     Label(title, systemImage: "calendar").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     Button("Reset to event") { model.resetToEvent() }.font(.caption).buttonStyle(.link)
                 } else { Text("EXPLORE A MOMENT").font(.system(size: 10, weight: .semibold)).tracking(1.5).foregroundStyle(.secondary) }
+                Label(model.zoneLabel, systemImage: "clock").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .help("Times are shown in the place's own time zone")
                 Spacer()
                 Toggle("Time range", isOn: Binding(get: { model.rangeEnabled }, set: { model.setRangeEnabled($0) })).toggleStyle(.checkbox).font(.caption)
+                Toggle(isOn: $model.weatherEnabled) { Label("Weather", systemImage: "cloud.sun").font(.caption) }
+                    .toggleStyle(.switch).controlSize(.mini)
+                    .help("Turn off weather to explore a clear astronomical sky")
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 18) { dateFields }
@@ -234,6 +252,7 @@ struct TimeControls: View {
                     set: { model.isPlaying = false; model.instant = Date(timeIntervalSince1970: $0) }
                 ), in: sliderBounds)
                     .accessibilityLabel("Explore time").accessibilityValue(timeText)
+                    .help("← → step 15 minutes · ⇧ for an hour · Space plays or pauses")
                 Picker("Playback speed", selection: $model.playbackSpeed) {
                     Text("1 min/s").tag(60.0)
                     Text("5 min/s").tag(300.0)
@@ -324,6 +343,8 @@ struct SettingsView: View {
                     Text("Low").tag("low"); Text("Balanced").tag("balanced"); Text("High").tag("high")
                 }
                 Toggle("Reduce motion", isOn: $model.reducedMotion)
+                Toggle("Slowly circle the aerial view when idle", isOn: $model.idleOrbit)
+                    .disabled(model.reducedMotion)
                 Toggle("Illustrative white surfaces", isOn: $model.snowCover)
                 Text("White surfaces are an illustration, not a prediction of accumulated snow. No snow depth or puddles are simulated.").font(.caption).foregroundStyle(.secondary)
                 Toggle("Computed shadows on the 3D mesh", isOn: $model.computedShadows)
