@@ -14,6 +14,8 @@
     <key>NSHighResolutionCapable</key><true/>
     <key>NSCalendarsFullAccessUsageDescription</key>
     <string>WhenScape reads your events to show their locations and times in a 3D scene. Apple requires full calendar access to read existing events. WhenScape never creates, changes, or deletes calendar events. You can explore places manually without permission.</string>
+    <key>NSContactsUsageDescription</key>
+    <string>WhenScape looks up the addresses of people you search for, and the Home and Work addresses on your own card, so you can explore those places. It only reads names and addresses and never changes your contacts. An address you choose is sent to Apple to find it on the map.</string>
     <key>NSAppTransportSecurity</key><dict>
         <key>NSAllowsLocalNetworking</key><true/>
         <key>NSExceptionDomains</key><dict>

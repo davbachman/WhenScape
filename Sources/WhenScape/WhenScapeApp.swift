@@ -21,6 +21,7 @@ struct WhenScapeApp: App {
                     .disabled(model.locationRequired)
                 Button("Return to Event") { model.resetToEvent() }.disabled(model.selectedEventID == nil)
                 Toggle("Show Weather", isOn: $model.weatherEnabled)
+                Toggle("Turntable", isOn: $model.idleOrbit).disabled(model.reducedMotion)
             }
         }
         Settings { SettingsView(model: model) }
@@ -220,6 +221,13 @@ struct TimeControls: View {
                 Toggle(isOn: $model.weatherEnabled) { Label("Weather", systemImage: "cloud.sun").font(.caption) }
                     .toggleStyle(.switch).controlSize(.mini)
                     .help("Turn off weather to explore a clear astronomical sky")
+                    .accessibilityLabel("Weather")
+                Toggle(isOn: $model.idleOrbit) { Label("Turntable", systemImage: "rotate.3d").font(.caption) }
+                    .toggleStyle(.switch).controlSize(.mini)
+                    .disabled(model.reducedMotion)
+                    .accessibilityLabel("Turntable")
+                    .help(model.reducedMotion ? "Reduce motion is on, so the aerial view stays still"
+                          : "Slowly circle the aerial view around the flag when it is left alone for 30 seconds")
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 18) { dateFields }
@@ -343,7 +351,7 @@ struct SettingsView: View {
                     Text("Low").tag("low"); Text("Balanced").tag("balanced"); Text("High").tag("high")
                 }
                 Toggle("Reduce motion", isOn: $model.reducedMotion)
-                Toggle("Slowly circle the aerial view when idle", isOn: $model.idleOrbit)
+                Toggle("Turntable: slowly circle the aerial view when idle", isOn: $model.idleOrbit)
                     .disabled(model.reducedMotion)
                 Toggle("Illustrative white surfaces", isOn: $model.snowCover)
                 Text("White surfaces are an illustration, not a prediction of accumulated snow. No snow depth or puddles are simulated.").font(.caption).foregroundStyle(.secondary)
@@ -352,10 +360,10 @@ struct SettingsView: View {
             }
             Section("Developer") {
                 Toggle("Show scene diagnostics", isOn: $model.sceneDiagnostics)
-                Text("Shows camera, ground and tile readings over the 3D scene, and lets Safari’s Web Inspector attach to it (Develop menu › this Mac › WhenScape).").font(.caption).foregroundStyle(.secondary)
+                Text("Shows camera, ground and tile readings over the 3D scene, and lets Safari’s Web Inspector attach to it (Develop menu › this Mac › WhenScape). It turns off when WhenScape quits.").font(.caption).foregroundStyle(.secondary)
             }
             Section("Data & privacy") {
-                Text("Calendar access is read-only within WhenScape. Event titles, notes and attendees stay on your Mac. Place searches go to Apple; coordinates and requested times go to map and weather providers.")
+                Text("Calendar access is read-only within WhenScape. Event titles, notes and attendees stay on your Mac. Contacts, if you allow them, are read for names and addresses only; they stay on your Mac except an address you choose, which goes to Apple to find it. Place searches go to Apple; coordinates and requested times go to map and weather providers.")
                 Text("Astronomy is calculated. Weather uses forecasts, historical estimates, or a five-year seasonal baseline. Buildings may have estimated heights or missing geometry; the scene is not a historical reconstruction.")
                 Link("Weather data: Open-Meteo", destination: URL(string: "https://open-meteo.com/")!)
                 Text("The public Open-Meteo endpoint is for non-commercial use. Review provider plans and licenses before commercial distribution.")

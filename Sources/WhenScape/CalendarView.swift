@@ -1,6 +1,7 @@
 import AppKit
 import EventKit
 import SwiftUI
+import WhenScapeCore
 
 @MainActor
 struct CalendarPane: View {
@@ -9,6 +10,11 @@ struct CalendarPane: View {
     @State private var displayedDate = Date()
     @State private var details: CalendarEvent?
     @State private var showCalendars = false
+    /// How far the days are pushed sideways by a two-finger scroll or a week turning.
+    @State private var slide: CGFloat = 0
+    @State private var dayAreaWidth: CGFloat = 300
+    @State private var turning = false
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
 
     private let hourHeight: CGFloat = 48
     private let gutter: CGFloat = 38
@@ -71,10 +77,10 @@ struct CalendarPane: View {
                 .popover(isPresented: $showCalendars) { calendarFilter }
             }
             HStack(spacing: 5) {
-                Button { navigateWeek(-1) } label: { Image(systemName: "chevron.left") }
+                Button { turnWeek(-1) } label: { Image(systemName: "chevron.left") }
                     .accessibilityLabel("Previous week")
                 Button("Today") { displayedDate = Date() }
-                Button { navigateWeek(1) } label: { Image(systemName: "chevron.right") }
+                Button { turnWeek(1) } label: { Image(systemName: "chevron.right") }
                     .accessibilityLabel("Next week")
                 Spacer(minLength: 0)
                 Text("Week · \(calendar.timeZone.abbreviation() ?? calendar.timeZone.identifier)")
@@ -92,18 +98,24 @@ struct CalendarPane: View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 Color.clear.frame(width: gutter)
-                ForEach(days, id: \.self) { day in
-                    VStack(spacing: 3) {
-                        Text(day.formatted(.dateTime.weekday(.narrow)))
-                            .font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
-                        Text(day.formatted(.dateTime.day()))
-                            .font(.system(size: 12, weight: calendar.isDateInToday(day) ? .bold : .regular))
-                            .foregroundStyle(calendar.isDateInToday(day) ? Color.white : Color.primary)
-                            .frame(width: 23, height: 23)
-                            .background(calendar.isDateInToday(day) ? Color.accentColor : .clear, in: Circle())
-                    }.frame(maxWidth: .infinity).padding(.vertical, 6)
+                sliding {
+                    ForEach(days, id: \.self) { day in
+                        VStack(spacing: 3) {
+                            Text(day.formatted(.dateTime.weekday(.narrow)))
+                                .font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
+                            Text(day.formatted(.dateTime.day()))
+                                .font(.system(size: 12, weight: calendar.isDateInToday(day) ? .bold : .regular))
+                                .foregroundStyle(calendar.isDateInToday(day) ? Color.white : Color.primary)
+                                .frame(width: 23, height: 23)
+                                .background(calendar.isDateInToday(day) ? Color.accentColor : .clear, in: Circle())
+                        }.frame(maxWidth: .infinity).padding(.vertical, 6)
+                    }
                 }
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { dayAreaWidth = $0 }
             }
+            // Only as tall as the day labels; otherwise the blank corner above the
+            // hour labels stretches and takes half the height from the hours.
+            .fixedSize(horizontal: false, vertical: true)
             ScrollView(.vertical) { allDayRow }
                 .frame(height: allDayRowHeight)
             Divider()
@@ -118,12 +130,14 @@ struct CalendarPane: View {
                     ZStack(alignment: .topLeading) {
                         HStack(alignment: .top, spacing: 0) {
                             hourLabels
-                            ForEach(days, id: \.self) { day in
-                                DayColumn(day: day, events: service.visibleEvents,
-                                          calendar: calendar, hourHeight: hourHeight,
-                                          selectedID: model.selectedEventID) { event in
-                                    model.selectEvent(event)
-                                    details = event
+                            sliding {
+                                ForEach(days, id: \.self) { day in
+                                    DayColumn(day: day, events: service.visibleEvents,
+                                              calendar: calendar, hourHeight: hourHeight,
+                                              selectedID: model.selectedEventID) { event in
+                                        model.selectEvent(event)
+                                        details = event
+                                    }
                                 }
                             }
                         }
@@ -145,6 +159,51 @@ struct CalendarPane: View {
             }.padding(.horizontal, 10).padding(.vertical, 7)
                 .background(.bar)
         }
+        .background(SideScrollReader(onFollow: followSwipe, onRelease: releaseSwipe, onStep: turnWeek))
+    }
+
+    /// Days that move together when the week is scrolled sideways, clipped to
+    /// their own column so the hour labels stay put.
+    private func sliding<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        HStack(alignment: .top, spacing: 0) { content() }
+            .offset(x: slide)
+            .opacity(1 - 0.6 * min(abs(slide) / max(dayAreaWidth, 1), 1))
+            .clipped()
+    }
+
+    private func followSwipe(_ travel: CGFloat) {
+        guard !turning else { return }
+        slide = max(-dayAreaWidth, min(dayAreaWidth, travel))
+    }
+
+    private func releaseSwipe(_ travel: CGFloat) {
+        guard !turning else { return }
+        let page = SideScroll.page(travel: travel, width: dayAreaWidth)
+        if page == 0 { withAnimation(.spring(duration: 0.25)) { slide = 0 } } else { turnWeek(page) }
+    }
+
+    /// Turns to an earlier (−1) or later (+1) week: the days slide out the way
+    /// they were going and the new week slides in behind them.
+    private func turnWeek(_ delta: Int) {
+        guard !turning else { return }
+        let width = max(dayAreaWidth, 1)
+        guard !(systemReduceMotion || model.reducedMotion) else {
+            navigateWeek(delta)
+            slide = 0
+            return
+        }
+        turning = true
+        withAnimation(.easeIn(duration: 0.12)) { slide = delta > 0 ? -width : width } completion: {
+            var instant = Transaction()
+            instant.disablesAnimations = true
+            withTransaction(instant) {
+                navigateWeek(delta)
+                slide = delta > 0 ? width : -width
+            }
+            DispatchQueue.main.async {
+                withAnimation(.easeOut(duration: 0.2)) { slide = 0 } completion: { turning = false }
+            }
+        }
     }
 
     private var hourLabels: some View {
@@ -163,27 +222,29 @@ struct CalendarPane: View {
         HStack(alignment: .top, spacing: 0) {
             Text("all-day").font(.system(size: 8)).foregroundStyle(.secondary)
                 .frame(width: gutter, height: 22, alignment: .center)
-            ForEach(days, id: \.self) { day in
-                let entries = service.visibleEvents.filter {
-                    $0.isAllDay && $0.start < calendar.date(byAdding: .day, value: 1, to: day)! && $0.end > day
-                }
-                VStack(spacing: 2) {
-                    ForEach(entries) { event in
-                        Button {
-                            model.selectEvent(event)
-                            details = event
-                        } label: {
-                            Text(event.title).font(.system(size: 9, weight: .medium))
-                                .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 3).padding(.vertical, 3)
-                                .background(event.color.opacity(0.18), in: RoundedRectangle(cornerRadius: 3))
-                        }
-                        .buttonStyle(.plain).help(event.title)
-                        .accessibilityLabel("\(event.title), all-day")
+            sliding {
+                ForEach(days, id: \.self) { day in
+                    let entries = service.visibleEvents.filter {
+                        $0.isAllDay && $0.start < calendar.date(byAdding: .day, value: 1, to: day)! && $0.end > day
                     }
+                    VStack(spacing: 2) {
+                        ForEach(entries) { event in
+                            Button {
+                                model.selectEvent(event)
+                                details = event
+                            } label: {
+                                Text(event.title).font(.system(size: 9, weight: .medium))
+                                    .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 3).padding(.vertical, 3)
+                                    .background(event.color.opacity(0.18), in: RoundedRectangle(cornerRadius: 3))
+                            }
+                            .buttonStyle(.plain).help(event.title)
+                            .accessibilityLabel("\(event.title), all-day")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 22, alignment: .topLeading)
+                    .padding(.horizontal, 1)
                 }
-                .frame(maxWidth: .infinity, minHeight: 22, alignment: .topLeading)
-                .padding(.horizontal, 1)
             }
         }.padding(.bottom, 4)
     }
@@ -433,5 +494,75 @@ private struct EventDetails: View {
         let firstZone = zone.abbreviation(for: event.start) ?? zone.identifier
         let lastZone = zone.abbreviation(for: event.end) ?? zone.identifier
         return "\(formatter.string(from: event.start)) \(firstZone)\n\(formatter.string(from: event.end)) \(lastZone)"
+    }
+}
+
+/// Watches scroll events over the week grid. Two-finger sideways scrolls (and
+/// a mouse's sideways wheel) go to the calendar; vertical ones go on to the
+/// scroll views inside, so the hours still scroll as before.
+private struct SideScrollReader: NSViewRepresentable {
+    var onFollow: (CGFloat) -> Void
+    var onRelease: (CGFloat) -> Void
+    var onStep: (Int) -> Void
+
+    func makeNSView(context: Context) -> ReaderView { ReaderView() }
+
+    func updateNSView(_ view: ReaderView, context: Context) {
+        view.onFollow = onFollow
+        view.onRelease = onRelease
+        view.onStep = onStep
+    }
+
+    static func dismantleNSView(_ view: ReaderView, coordinator: ()) { view.stopWatching() }
+
+    final class ReaderView: NSView {
+        var onFollow: (CGFloat) -> Void = { _ in }
+        var onRelease: (CGFloat) -> Void = { _ in }
+        var onStep: (Int) -> Void = { _ in }
+        private var monitor: Any?
+        private var scroll = SideScroll()
+
+        // Clicks and hovers go to the calendar underneath.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            stopWatching()
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                guard let self, self.take(event) else { return event }
+                return nil
+            }
+        }
+
+        func stopWatching() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+        }
+
+        /// Whether the event was used here and should go no further.
+        private func take(_ event: NSEvent) -> Bool {
+            guard event.window === window, !isHiddenOrHasHiddenAncestor else { return false }
+            let inside = bounds.contains(convert(event.locationInWindow, from: nil))
+            switch scroll.handle(Self.phase(of: event), dx: event.scrollingDeltaX, dy: event.scrollingDeltaY,
+                                 inside: inside, precise: event.hasPreciseScrollingDeltas, at: event.timestamp) {
+            case .pass: return false
+            case .consume: return true
+            case .follow(let travel): onFollow(travel); return true
+            case .release(let travel): onRelease(travel); return true
+            case .step(let direction): onStep(direction); return true
+            }
+        }
+
+        private static func phase(of event: NSEvent) -> SideScroll.Phase {
+            if !event.momentumPhase.isEmpty { return .momentum }
+            let phase = event.phase
+            if phase.contains(.mayBegin) { return .mayBegin }
+            if phase.contains(.began) { return .began }
+            if phase.contains(.ended) { return .ended }
+            if phase.contains(.cancelled) { return .cancelled }
+            if phase.contains(.changed) || phase.contains(.stationary) { return .changed }
+            return .none
+        }
     }
 }

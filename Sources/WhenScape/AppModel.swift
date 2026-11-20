@@ -29,9 +29,12 @@ final class AppModel: ObservableObject {
     @Published var reducedMotion = false
     @Published var computedShadows = Preferences.bool(.computedShadows, default: false) { didSet { Preferences.set(computedShadows, .computedShadows) } }
     @Published var idleOrbit = Preferences.bool(.idleOrbit, default: true) { didSet { Preferences.set(idleOrbit, .idleOrbit) } }
-    @Published var sceneDiagnostics = Preferences.bool(.sceneDiagnostics, default: false) { didSet { Preferences.set(sceneDiagnostics, .sceneDiagnostics) } }
+    /// A developer aid, so it lasts only until the app quits and cannot be left covering the scene.
+    @Published var sceneDiagnostics = false
     @Published var detail = Preferences.string(.detail, default: "balanced", allowed: ["low", "balanced", "high"]) { didSet { Preferences.set(detail, .detail) } }
     @Published var ionToken = TokenStore.read()
+    /// Saved places (Home, Work and others) and recently chosen ones.
+    @Published private(set) var places = Preferences.placeBook() { didSet { Preferences.setPlaceBook(places) } }
     @Published var sceneMessage = "Preparing the scene…"
     @Published var sceneReady = false
     @Published var heading = 0.0
@@ -98,7 +101,7 @@ final class AppModel: ObservableObject {
         eventLocationQuery = event.location?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if let lat = event.latitude, let lon = event.longitude,
            CLLocationCoordinate2DIsValid(.init(latitude: lat, longitude: lon)) {
-            setLocation(.init(latitude: lat, longitude: lon), name: event.location ?? "Event location")
+            setLocation(.init(latitude: lat, longitude: lon), name: event.location ?? "Event location", remember: true)
         } else {
             locationRequired = true
             timeZone = event.timeZone ?? .current
@@ -124,7 +127,11 @@ final class AppModel: ObservableObject {
     func chooseStart(_ date: Date) { clearEventSelection(); setStart(date) }
     func chooseEnd(_ date: Date) { clearEventSelection(); setEnd(date) }
 
-    func setLocation(_ coordinate: CLLocationCoordinate2D, name: String? = nil, knownTimeZone: TimeZone? = nil) {
+    /// Moves the observer. `remember` adds the place to the recent places once
+    /// its time zone is resolved; it is set for places chosen by name (a search,
+    /// a contact or an event), not for clicks on the map.
+    func setLocation(_ coordinate: CLLocationCoordinate2D, name: String? = nil, knownTimeZone: TimeZone? = nil,
+                     remember: Bool = false) {
         guard CLLocationCoordinate2DIsValid(coordinate) else { return }
         geocoder.cancelGeocode()
         let revision = UUID()
@@ -154,8 +161,25 @@ final class AppModel: ObservableObject {
                     else if knownTimeZone == nil { self.timeZoneNote = "Local time zone unavailable; showing UTC" }
                 } else if knownTimeZone == nil { self.timeZoneNote = "Local time zone unavailable; showing UTC" }
                 self.savePlace()
+                if remember { self.places.noteVisit(self.currentRecord()) }
             }
         }
+    }
+
+    /// The saved place the observer stands at, if any.
+    var currentSavedPlace: PlaceRecord? { places.savedPlace(nearLatitude: latitude, longitude: longitude) }
+
+    func go(to place: PlaceRecord) {
+        setLocation(.init(latitude: place.latitude, longitude: place.longitude), name: place.name,
+                    knownTimeZone: place.timeZoneID.flatMap(TimeZone.init(identifier:)))
+    }
+    func saveCurrentPlace(as label: String) { places.save(currentRecord(), as: label) }
+    func save(_ place: PlaceRecord, as label: String) { places.save(place, as: label) }
+    func forget(_ place: PlaceRecord) { places.remove(place.id) }
+
+    private func currentRecord() -> PlaceRecord {
+        PlaceRecord(name: locationName, latitude: latitude, longitude: longitude,
+                    timeZoneID: timeZoneNote == nil ? timeZone.identifier : nil)
     }
 
     private func applyPendingAllDayTime() {

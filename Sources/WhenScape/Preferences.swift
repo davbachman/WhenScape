@@ -1,11 +1,12 @@
 import Foundation
+import WhenScapeCore
 
 /// Settings and the last place, kept between launches in the app's own
 /// defaults. Nothing here leaves the Mac. The Cesium token is not stored here;
 /// it stays in the Keychain.
 enum Preferences {
     enum Key: String {
-        case weatherEnabled, snowCover, computedShadows, detail, playbackSpeed, hiddenCalendars, sceneDiagnostics, idleOrbit
+        case weatherEnabled, snowCover, computedShadows, detail, playbackSpeed, hiddenCalendars, idleOrbit, places
         case placeLatitude, placeLongitude, placeName, placeTimeZone
     }
 
@@ -44,6 +45,16 @@ enum Preferences {
         return Place(latitude: latitude, longitude: longitude,
                      name: store.string(forKey: Key.placeName.rawValue) ?? String(format: "%.5f, %.5f", latitude, longitude),
                      timeZone: zone)
+    }
+
+    /// Saved and recent places. An unreadable record starts the book afresh.
+    static func placeBook() -> PlaceBook {
+        guard let data = store.data(forKey: Key.places.rawValue),
+              let book = try? JSONDecoder().decode(PlaceBook.self, from: data) else { return PlaceBook() }
+        return book
+    }
+    static func setPlaceBook(_ book: PlaceBook) {
+        if let data = try? JSONEncoder().encode(book) { store.set(data, forKey: Key.places.rawValue) }
     }
 
     /// Saves the place; a time zone is kept only once it is the place's own, not the UTC fallback.
