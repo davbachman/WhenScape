@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fromWall, toInputValue, fromInputValue, dayInterval, stepped, advancing, zoneLabel, noonOn, wallParts } from '../../Site/time.js';
+import { fromWall, toInputValue, fromInputValue, toTimeValue, withCivilDate, withWallTime, dayInterval, stepped, advancing, zoneLabel, noonOn, wallParts } from '../../Site/time.js';
+import { monthGrid, shiftDays, shiftMonths, compareDates } from '../../Site/calendar.js';
 import { parseCalendarText } from '../../Site/paste.js';
 import { encodeLink, decodeLink } from '../../Site/link.js';
 import { PlaceBook, expire, KEEP_FOR, needsLookup } from '../../Site/places.js';
@@ -13,6 +14,34 @@ test('wall times convert both ways in a zone', () => {
   assert.equal(toInputValue(instant, LA), '2026-11-20T15:30');
   assert.equal(fromInputValue('2026-07-04T09:05', LA).toISOString(), '2026-07-04T16:05:00.000Z');
   assert.equal(fromInputValue('not a time', LA), null);
+});
+
+test('a date and a time can be changed separately', () => {
+  const instant = fromWall({ year: 2026, month: 11, day: 20, hour: 15, minute: 30 }, LA);
+  assert.equal(toTimeValue(instant, LA), '15:30');
+  assert.equal(toInputValue(withCivilDate(instant, { year: 2027, month: 1, day: 2 }, LA), LA), '2027-01-02T15:30');
+  assert.equal(toInputValue(withWallTime(instant, '07:05', LA), LA), '2026-11-20T07:05');
+  assert.equal(withWallTime(instant, '', LA), null);
+  assert.equal(withWallTime(instant, '25:00', LA), null);
+  // Moving 2:30 AM onto the spring-forward day lands just after the gap.
+  const early = fromWall({ year: 2026, month: 3, day: 7, hour: 2, minute: 30 }, LA);
+  assert.equal(toInputValue(withCivilDate(early, { year: 2026, month: 3, day: 8 }, LA), LA), '2026-03-08T03:30');
+});
+
+test('the calendar shows whole weeks and steps by day and month', () => {
+  // November 2026 starts on a Sunday; with Sunday first it needs five rows, padded to six.
+  const sunday = monthGrid(2026, 11, 7);
+  assert.equal(sunday.length, 42);
+  assert.deepEqual(sunday[0], { year: 2026, month: 11, day: 1 });
+  assert.deepEqual(sunday[41], { year: 2026, month: 12, day: 12 });
+  // With Monday first, the grid starts on Monday 26 October.
+  assert.deepEqual(monthGrid(2026, 11, 1)[0], { year: 2026, month: 10, day: 26 });
+  assert.deepEqual(shiftDays({ year: 2026, month: 12, day: 31 }, 1), { year: 2027, month: 1, day: 1 });
+  assert.deepEqual(shiftDays({ year: 2028, month: 3, day: 1 }, -1), { year: 2028, month: 2, day: 29 });
+  assert.deepEqual(shiftMonths({ year: 2026, month: 1, day: 31 }, 1), { year: 2026, month: 2, day: 28 });
+  assert.deepEqual(shiftMonths({ year: 2026, month: 1, day: 15 }, -13), { year: 2024, month: 12, day: 15 });
+  assert.ok(compareDates({ year: 2026, month: 2, day: 1 }, { year: 2026, month: 1, day: 31 }) > 0);
+  assert.equal(compareDates({ year: 2026, month: 2, day: 1 }, { year: 2026, month: 2, day: 1 }), 0);
 });
 
 test('daylight saving gaps and repeats resolve sensibly', () => {

@@ -122,6 +122,61 @@ try {
   const later = new Date((await state(page)).instant);
   assert.ok(later - after > 0 && later - after <= 60 * 60_000, 'Shift+ArrowRight in the scene steps an hour');
 
+  // The date opens a calendar that stays on screen: the field is near the
+  // bottom edge, so it opens above. Arrow keys move through its days without
+  // stepping the time, and choosing a day keeps the time of day.
+  const wallTime = () => page.evaluate(() => {
+    const { instant, timeZone } = window.whenScapeSite.state;
+    return new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(instant));
+  });
+  const timeOfDay = await wallTime();
+  const dateLabel = await page.locator('#instant-date').textContent();
+  await page.locator('#instant-date').click();
+  await page.waitForSelector('.calendar:not([hidden])');
+  const calendarBox = await page.locator('.calendar').boundingBox();
+  const fieldBox = await page.locator('#instant-date').boundingBox();
+  assert.ok(calendarBox.y >= 0 && calendarBox.y + calendarBox.height <= 800, 'the calendar stays inside the window');
+  assert.ok(calendarBox.y + calendarBox.height <= fieldBox.y, 'near the bottom edge the calendar opens above its field');
+  assert.equal(await page.locator('.cal-day.selected').count(), 1);
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('Enter');
+  assert.equal(await page.locator('.calendar').isHidden(), true, 'choosing a day closes the calendar');
+  const nextDay = new Date((await state(page)).instant);
+  assert.ok(nextDay - later >= 23 * 3_600_000 && nextDay - later <= 25 * 3_600_000, 'the next day was chosen');
+  assert.equal(await wallTime(), timeOfDay, 'the time of day is kept');
+  assert.notEqual(await page.locator('#instant-date').textContent(), dateLabel);
+  // Escape closes it without choosing.
+  await page.locator('#instant-date').click();
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('.calendar').isHidden(), true);
+  assert.equal((await state(page)).instant, nextDay.toISOString());
+  // The time field changes only the time.
+  const chosenDate = await page.locator('#instant-date').textContent();
+  await page.locator('#instant-time').fill('21:15');
+  assert.equal(await wallTime(), '21:15');
+  assert.equal(await page.locator('#instant-date').textContent(), chosenDate, 'the date stays the same');
+  // With a range, the end's calendar shades the days between and will not go before the start.
+  await page.locator('#range-toggle').check();
+  await page.locator('#end-date').click();
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Enter');
+  now = await state(page);
+  assert.ok(new Date(now.end) - new Date(now.start) >= 47 * 3_600_000, 'the range now ends two days later');
+  await page.locator('#end-date').click();
+  assert.equal(await page.locator('.cal-day.in-range').count(), 3, 'the range is shaded across three days');
+  const blockedDays = page.locator('.cal-day[aria-disabled="true"]');
+  if (await blockedDays.count()) { // none show when the start is the grid's first day
+    await blockedDays.last().click({ force: true }); // Playwright itself declines aria-disabled buttons
+    assert.equal(await page.locator('.calendar').isHidden(), false, 'a day before the start cannot be chosen');
+    assert.equal((await state(page)).end, now.end);
+  }
+  await page.keyboard.press('Escape');
+  await page.locator('#range-toggle').uncheck();
+
   // Pasting a copied Calendar event, in the page or in the scene, brings in its time and asks for a place.
   const eventText = 'Office hours\nScheduled: Nov 9, 2026 at 12:00 PM to 1:00 PM, EST\n';
   await page.evaluate(text => {
@@ -187,5 +242,5 @@ try {
   assert.deepEqual(phone.errors, []);
   await phone.context.close();
 
-  console.log('Browser app checks passed: scene in its frame, place search, map clicks with time zones, saved places, time keys in the page and the scene, pasted timed and all-day calendar events, copied links reopening the same moment, and a phone layout. Google Maps was a stand-in and weather was fixtures.');
+  console.log('Browser app checks passed: scene in its frame, place search, map clicks with time zones, saved places, time keys in the page and the scene, the calendar and time fields, pasted timed and all-day calendar events, copied links reopening the same moment, and a phone layout. Google Maps was a stand-in and weather was fixtures.');
 } finally { await browser.close(); }

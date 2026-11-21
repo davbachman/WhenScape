@@ -3,7 +3,8 @@
 // time controls, and passes everything to the scene in its frame.
 
 import tzlookup from '@photostructure/tz-lookup';
-import { dayInterval, clamped, stepped, advancing, toInputValue, fromInputValue, zoneLabel, formatMoment, noonOn, civilDate, isTimeZone } from './time.js';
+import { dayInterval, clamped, stepped, advancing, toTimeValue, withCivilDate, withWallTime, zoneLabel, formatMoment, noonOn, civilDate, isTimeZone } from './time.js';
+import { createCalendar } from './calendar.js';
 import { parseCalendarText } from './paste.js';
 import { encodeLink, decodeLink } from './link.js';
 import { PlaceBook, placeTitle, needsLookup } from './places.js';
@@ -150,7 +151,7 @@ setInterval(() => {
   renderTime(); pushScene();
 }, 100);
 
-const editing = target => target instanceof Element && !!target.closest('input:not([type="range"]):not([type="checkbox"]), textarea, select, [contenteditable], dialog[open]');
+const editing = target => target instanceof Element && !!target.closest('input:not([type="range"]):not([type="checkbox"]), textarea, select, [contenteditable], dialog[open], .calendar');
 
 function handleTimeKey(key, shift) {
   if (key === 'ArrowLeft' || key === 'ArrowRight') step(shift ? 60 : 15, key === 'ArrowRight');
@@ -536,6 +537,22 @@ $('keep-place').addEventListener('click', () => {
 
 // ---------------------------------------------------------------- Rendering
 
+const dateFields = {
+  instant: { date: $('instant-date'), time: $('instant-time'), value: () => app.instant, choose: date => chooseInstant(date), label: 'Choose the date' },
+  start: { date: $('start-date'), time: $('start-time'), value: () => app.start, choose: date => chooseStart(date), label: 'Choose the first day' },
+  end: { date: $('end-date'), time: $('end-time'), value: () => app.end, choose: date => chooseEnd(date), label: 'Choose the last day' },
+};
+const dateFormats = new Map();
+/** "Sat, Nov 21, 2026" in the reader's own language, on the place's calendar. */
+function dateText(instant, timeZone) {
+  let format = dateFormats.get(timeZone);
+  if (!format) {
+    format = new Intl.DateTimeFormat(navigator.language, { timeZone, weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+    dateFormats.set(timeZone, format);
+  }
+  return format.format(instant);
+}
+
 let lastMomentText = '';
 function renderTime() {
   const { start, end } = interval();
@@ -547,11 +564,13 @@ function renderTime() {
   $('range-toggle').checked = app.rangeEnabled;
   $('instant-fields').hidden = app.rangeEnabled;
   $('range-fields').hidden = !app.rangeEnabled;
-  const setField = (input, date) => { if (document.activeElement !== input) input.value = toInputValue(date, zone); };
-  setField($('instant-input'), app.instant);
-  setField($('start-input'), app.start);
-  setField($('end-input'), app.end);
-  $('end-input').min = toInputValue(new Date(app.start.getTime() + 60_000), zone);
+  for (const field of Object.values(dateFields)) {
+    const value = field.value();
+    const text = field.date.firstElementChild;
+    const label = dateText(value, zone);
+    if (text.textContent !== label) text.textContent = label;
+    if (document.activeElement !== field.time) field.time.value = toTimeValue(value, zone);
+  }
   $('all-day-note').hidden = !(app.event?.allDay && !app.rangeEnabled);
   const scrub = $('scrub');
   const upper = app.rangeEnabled ? end : new Date(end.getTime() - 1000);
@@ -607,9 +626,26 @@ function renderLocation() {
 
 // ---------------------------------------------------------------- Controls
 
-$('instant-input').addEventListener('change', event => { const date = fromInputValue(event.target.value, app.timeZone); if (date) chooseInstant(date); });
-$('start-input').addEventListener('change', event => { const date = fromInputValue(event.target.value, app.timeZone); if (date) chooseStart(date); });
-$('end-input').addEventListener('change', event => { const date = fromInputValue(event.target.value, app.timeZone); if (date) chooseEnd(date); });
+// Each moment has a date button, which opens the calendar, and a time field.
+const calendar = createCalendar();
+for (const [name, field] of Object.entries(dateFields)) {
+  field.date.addEventListener('click', () => {
+    if (calendar.isOpenFor(field.date)) { calendar.close(); return; }
+    const zone = app.timeZone;
+    calendar.open(field.date, {
+      label: field.label,
+      selected: civilDate(field.value(), zone),
+      today: civilDate(new Date(), zone),
+      earliest: name === 'end' ? civilDate(app.start, zone) : null,
+      range: app.rangeEnabled ? { from: civilDate(app.start, zone), to: civilDate(app.end, zone) } : null,
+      onPick: date => field.choose(withCivilDate(field.value(), date, app.timeZone)),
+    });
+  });
+  field.time.addEventListener('change', () => {
+    const date = withWallTime(field.value(), field.time.value, app.timeZone);
+    if (date) field.choose(date);
+  });
+}
 for (const button of document.querySelectorAll('.now')) {
   button.addEventListener('click', () => (button.dataset.field === 'start' ? chooseStart(new Date()) : chooseInstant(new Date())));
 }

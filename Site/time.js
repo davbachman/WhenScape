@@ -72,6 +72,25 @@ export function fromInputValue(value, timeZone) {
   return fromWall({ year, month, day, hour, minute }, timeZone);
 }
 
+/** The value for an <input type="time"> showing this instant's wall clock in a zone. */
+export function toTimeValue(instant, timeZone) {
+  const w = wallParts(instant, timeZone);
+  return `${pad(w.hour)}:${pad(w.minute)}`;
+}
+
+/** The same wall-clock time on another calendar date ({ year, month, day }). */
+export function withCivilDate(instant, date, timeZone) {
+  const w = wallParts(instant, timeZone);
+  return fromWall({ ...date, hour: w.hour, minute: w.minute }, timeZone);
+}
+
+/** The same calendar date at another wall-clock time ("HH:MM"), or null if it is not one. */
+export function withWallTime(instant, value, timeZone) {
+  const match = /^(\d{1,2}):(\d{2})/.exec(value ?? '');
+  if (!match || Number(match[1]) > 23 || Number(match[2]) > 59) return null;
+  return fromWall({ ...civilDate(instant, timeZone), hour: Number(match[1]), minute: Number(match[2]) }, timeZone);
+}
+
 /** The local day containing an instant, from midnight to the next midnight. */
 export function dayInterval(instant, timeZone) {
   const w = wallParts(instant, timeZone);
