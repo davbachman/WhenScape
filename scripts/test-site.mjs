@@ -158,6 +158,33 @@ try {
   await page.locator('#instant-time').fill('21:15');
   assert.equal(await wallTime(), '21:15');
   assert.equal(await page.locator('#instant-date').textContent(), chosenDate, 'the date stays the same');
+  // With a mouse, clicking the time opens columns of hours, minutes and AM/PM
+  // that stay on screen. Each click changes only the time, at once, and the
+  // field keeps focus so the time can still be typed.
+  assert.equal(await page.evaluate(() => document.documentElement.classList.contains('time-picker-on')), true);
+  await page.locator('#instant-time').click();
+  await page.waitForSelector('.time-picker:not([hidden])');
+  const pickerBox = await page.locator('.time-picker').boundingBox();
+  assert.ok(pickerBox.y >= 0 && pickerBox.y + pickerBox.height <= 800, 'the time picker stays inside the window');
+  assert.ok(pickerBox.y + pickerBox.height <= (await page.locator('#instant-time').boundingBox()).y, 'near the bottom edge it opens above its field');
+  assert.deepEqual(await page.locator('.tp-item.selected').allTextContents(), ['9', '15', 'PM']);
+  await page.locator('.tp-hour .tp-item', { hasText: /^7$/ }).click();
+  assert.equal(await wallTime(), '19:15', 'an hour keeps PM');
+  await page.locator('.tp-minute .tp-item', { hasText: /^40$/ }).click();
+  await page.locator('.tp-period .tp-item', { hasText: 'AM' }).click();
+  assert.equal(await wallTime(), '07:40');
+  assert.equal(await page.locator('#instant-time').inputValue(), '07:40');
+  assert.equal(await page.locator('#instant-date').textContent(), chosenDate, 'the date stays the same');
+  assert.equal(await page.locator('.time-picker').isHidden(), false, 'it stays open for the next column');
+  assert.equal(await page.evaluate(() => document.activeElement?.id), 'instant-time', 'the field keeps focus');
+  await page.locator('#instant-time').fill('06:05');
+  assert.deepEqual(await page.locator('.tp-item.selected').allTextContents(), ['6', '05', 'AM'], 'the columns follow a typed time');
+  assert.equal(await wallTime(), '06:05');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('.time-picker').isHidden(), true, 'Escape closes it');
+  await page.locator('#instant-time').click();
+  await page.locator('body').click({ position: { x: 5, y: 5 } });
+  assert.equal(await page.locator('.time-picker').isHidden(), true, 'a click elsewhere closes it');
   // With a range, the end's calendar shades the days between and will not go before the start.
   await page.locator('#range-toggle').check();
   await page.locator('#end-date').click();
@@ -238,9 +265,10 @@ try {
   assert.ok(layout.overflow <= 0, `no sideways scrolling on a phone (${layout.overflow}px too wide)`);
   assert.ok(layout.scene >= 300, 'the scene keeps a usable height');
   assert.ok(layout.order[0] < layout.order[1] && layout.order[1] < layout.order[2], 'scene, then time, then location');
+  assert.equal(await phone.page.evaluate(() => document.documentElement.classList.contains('time-picker-on')), false, 'a phone keeps its own time wheel');
   await phone.page.screenshot({ path: 'artifacts/site-phone.png', fullPage: true });
   assert.deepEqual(phone.errors, []);
   await phone.context.close();
 
-  console.log('Browser app checks passed: scene in its frame, place search, map clicks with time zones, saved places, time keys in the page and the scene, the calendar and time fields, pasted timed and all-day calendar events, copied links reopening the same moment, and a phone layout. Google Maps was a stand-in and weather was fixtures.');
+  console.log('Browser app checks passed: scene in its frame, place search, map clicks with time zones, saved places, time keys in the page and the scene, the calendar and time picker, pasted timed and all-day calendar events, copied links reopening the same moment, and a phone layout. Google Maps was a stand-in and weather was fixtures.');
 } finally { await browser.close(); }

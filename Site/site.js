@@ -5,6 +5,7 @@
 import tzlookup from '@photostructure/tz-lookup';
 import { dayInterval, clamped, stepped, advancing, toTimeValue, withCivilDate, withWallTime, zoneLabel, formatMoment, noonOn, civilDate, isTimeZone } from './time.js';
 import { createCalendar } from './calendar.js';
+import { createTimePicker, parseTimeValue, timeValue } from './timepicker.js';
 import { parseCalendarText } from './paste.js';
 import { encodeLink, decodeLink } from './link.js';
 import { PlaceBook, placeTitle, needsLookup } from './places.js';
@@ -151,7 +152,7 @@ setInterval(() => {
   renderTime(); pushScene();
 }, 100);
 
-const editing = target => target instanceof Element && !!target.closest('input:not([type="range"]):not([type="checkbox"]), textarea, select, [contenteditable], dialog[open], .calendar');
+const editing = target => target instanceof Element && !!target.closest('input:not([type="range"]):not([type="checkbox"]), textarea, select, [contenteditable], dialog[open], .calendar, .time-picker');
 
 function handleTimeKey(key, shift) {
   if (key === 'ArrowLeft' || key === 'ArrowRight') step(shift ? 60 : 15, key === 'ArrowRight');
@@ -628,6 +629,15 @@ function renderLocation() {
 
 // Each moment has a date button, which opens the calendar, and a time field.
 const calendar = createCalendar();
+// Phones and tablets have their own wheel or clock for a time field, so they
+// keep it; elsewhere the page's columns stand in for a picker (Safari and
+// Firefox have none on the desktop).
+const timePicker = createTimePicker();
+const finePointer = matchMedia('(hover: hover) and (pointer: fine)');
+const pointerTimePicker = () => finePointer.matches && navigator.maxTouchPoints === 0;
+const markTimePicker = () => document.documentElement.classList.toggle('time-picker-on', pointerTimePicker());
+markTimePicker();
+finePointer.addEventListener('change', markTimePicker);
 for (const [name, field] of Object.entries(dateFields)) {
   field.date.addEventListener('click', () => {
     if (calendar.isOpenFor(field.date)) { calendar.close(); return; }
@@ -645,6 +655,34 @@ for (const [name, field] of Object.entries(dateFields)) {
     const date = withWallTime(field.value(), field.time.value, app.timeZone);
     if (date) field.choose(date);
   });
+
+  // With a mouse or trackpad, clicking the time also opens columns of hours
+  // and minutes. Each click changes the time at once; the field keeps focus,
+  // so typing still works and the columns follow what is typed.
+  field.time.addEventListener('click', () => {
+    if (!pointerTimePicker() || timePicker.isOpenFor(field.time)) return;
+    timePicker.open(field.time.parentElement, field.time, {
+      time: parseTimeValue(field.time.value) ?? parseTimeValue(toTimeValue(field.value(), app.timeZone)),
+      onPick: time => {
+        const date = withWallTime(field.value(), timeValue(time), app.timeZone);
+        if (!date) return;
+        field.choose(date);
+        // The field is focused, so renderTime leaves it alone. Show where the
+        // time settled: a skipped hour, or an end kept after its start, moves it.
+        field.time.value = toTimeValue(field.value(), app.timeZone);
+        timePicker.show(parseTimeValue(field.time.value));
+      },
+    });
+  });
+  field.time.addEventListener('input', () => {
+    if (timePicker.isOpenFor(field.time)) timePicker.show(parseTimeValue(field.time.value));
+  });
+  field.time.addEventListener('keydown', event => {
+    if (!timePicker.isOpenFor(field.time) || (event.key !== 'Escape' && event.key !== 'Enter')) return;
+    event.preventDefault();
+    timePicker.close();
+  });
+  field.time.addEventListener('blur', () => { if (timePicker.isOpenFor(field.time)) timePicker.close(); });
 }
 for (const button of document.querySelectorAll('.now')) {
   button.addEventListener('click', () => (button.dataset.field === 'start' ? chooseStart(new Date()) : chooseInstant(new Date())));

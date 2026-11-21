@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fromWall, toInputValue, fromInputValue, toTimeValue, withCivilDate, withWallTime, dayInterval, stepped, advancing, zoneLabel, noonOn, wallParts } from '../../Site/time.js';
 import { monthGrid, shiftDays, shiftMonths, compareDates } from '../../Site/calendar.js';
+import { clockStyle, withPart, timeValue, parseTimeValue } from '../../Site/timepicker.js';
 import { parseCalendarText } from '../../Site/paste.js';
 import { encodeLink, decodeLink } from '../../Site/link.js';
 import { PlaceBook, expire, KEEP_FOR, needsLookup } from '../../Site/places.js';
@@ -42,6 +43,29 @@ test('the calendar shows whole weeks and steps by day and month', () => {
   assert.deepEqual(shiftMonths({ year: 2026, month: 1, day: 15 }, -13), { year: 2024, month: 12, day: 15 });
   assert.ok(compareDates({ year: 2026, month: 2, day: 1 }, { year: 2026, month: 1, day: 31 }) > 0);
   assert.equal(compareDates({ year: 2026, month: 2, day: 1 }, { year: 2026, month: 2, day: 1 }), 0);
+});
+
+test('the time picker follows the reader’s clock and changes one column at a time', () => {
+  const us = clockStyle('en-US');
+  assert.deepEqual(us, { twelve: true, zeroHour: 12, padHour: false, periods: ['AM', 'PM'], periodFirst: false });
+  const uk = clockStyle('en-GB');
+  assert.deepEqual([uk.twelve, uk.padHour, uk.periods], [false, true, null]);
+  const korean = clockStyle('ko-KR');
+  assert.deepEqual([korean.twelve, korean.periodFirst], [true, true], 'Korean puts 오전/오후 before the hour');
+
+  const evening = { hour: 21, minute: 15 };
+  assert.deepEqual(withPart(evening, 'hour', 7, true), { hour: 19, minute: 15 }, '7 on a 12-hour clock keeps PM');
+  assert.deepEqual(withPart(evening, 'hour', 0, true), { hour: 12, minute: 15 }, '12 PM is noon');
+  assert.deepEqual(withPart(evening, 'period', 0, true), { hour: 9, minute: 15 });
+  assert.deepEqual(withPart({ hour: 0, minute: 5 }, 'period', 1, true), { hour: 12, minute: 5 }, 'midnight becomes noon');
+  assert.deepEqual(withPart(evening, 'hour', 7, false), { hour: 7, minute: 15 });
+  assert.deepEqual(withPart(evening, 'minute', 40, true), { hour: 21, minute: 40 });
+
+  assert.equal(timeValue({ hour: 7, minute: 5 }), '07:05');
+  assert.deepEqual(parseTimeValue('21:15'), { hour: 21, minute: 15 });
+  assert.deepEqual(parseTimeValue('07:05:30'), { hour: 7, minute: 5 });
+  assert.equal(parseTimeValue('24:00'), null);
+  assert.equal(parseTimeValue(''), null);
 });
 
 test('daylight saving gaps and repeats resolve sensibly', () => {

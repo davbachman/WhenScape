@@ -4,6 +4,8 @@
 //
 // Dates here are calendar dates, { year, month (1–12), day }, with no time zone.
 
+import { placeBeside } from './popover.js';
+
 const DAY = 86_400_000;
 const toUTC = date => Date.UTC(date.year, date.month - 1, date.day);
 const fromUTC = ms => { const t = new Date(ms); return { year: t.getUTCFullYear(), month: t.getUTCMonth() + 1, day: t.getUTCDate() }; };
@@ -115,23 +117,7 @@ export function createCalendar({ locale = navigator.language } = {}) {
     place();
   }
 
-  // Below the button if it fits, otherwise above, and always inside the window.
-  function place() {
-    if (!current) return;
-    const anchor = current.anchor.getBoundingClientRect();
-    const width = element.offsetWidth, height = element.offsetHeight;
-    const viewWidth = document.documentElement.clientWidth, viewHeight = window.innerHeight;
-    const gap = 6, margin = 8;
-    const below = anchor.bottom + gap, above = anchor.top - gap - height;
-    let top;
-    if (below + height <= viewHeight - margin) top = below;
-    else if (above >= margin) top = above;
-    else top = Math.max(margin, Math.min(below, viewHeight - margin - height));
-    const left = Math.max(margin, Math.min(anchor.left, viewWidth - margin - width));
-    element.style.top = `${Math.round(top)}px`;
-    element.style.left = `${Math.round(left)}px`;
-    element.dataset.side = top < anchor.top ? 'above' : 'below';
-  }
+  const place = () => current && placeBeside(element, current.anchor);
 
   function open(anchor, options) {
     if (current) close();
