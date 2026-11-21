@@ -2,6 +2,8 @@
 
 A native macOS calendar companion for exploring a place at a particular time. SwiftUI and EventKit provide a read-only week calendar, MapKit selects the observer’s location, and a bundled CesiumJS scene displays real terrain, simplified buildings, astronomy and illustrative weather.
 
+WhenScape also runs in a web browser, on computers and phones: see [The browser app](#the-browser-app). It has no calendar panel; instead you paste an event copied from your calendar, or open a WhenScape link saved in one.
+
 The next version is a sundial screen saver. See [the sundial handoff](docs/sundial-handoff.md) for the design, reference photos and acceptance checks. The instructions below describe the existing calendar app.
 
 ## Build and run on a Mac
@@ -66,6 +68,32 @@ The seasonal baseline is a recent historical sample, **not a 30-year climate nor
 
 Requests use only coordinates and dates. The scene keeps an on-disk web cache private to the app, so downloaded map tiles and weather responses are reused across launches as far as the providers' cache headers allow. Hourly/day caching, timeouts, cancellation, stale-result protection, periodic refresh, and a bounded memory cache limit network work. No event title, attendees or notes are sent to Cesium or Open-Meteo. Apple receives the place query/reverse-geocoding request needed for the map and time zone.
 
+## The browser app
+
+`Site/` holds the browser version: the same 3D scene (`Web/`, loaded in a frame under `scene/`) with a location panel and time controls written for the web. It is a static site, published to GitHub Pages by `.github/workflows/pages.yml` on every push to `main`.
+
+**What it does.** Choose a place by searching, clicking the map, **Here** (the browser's location, on request), a saved place (Home, Work or any name, saved with the star) or a recent one. Times are shown in the place's own time zone, found offline from its coordinates. The date and time fields, **Now**, the time range, the slider, playback, ← → (⇧ for an hour) and Space work as in the Mac app, including while the scene has focus. **Paste event** (or ⌘V/Ctrl+V anywhere on the page) reads an event copied in a calendar app: its title and its time or time range, or its date for an all-day event, which starts at the place's local noon. Calendar's copied text has no location, so the app then asks where the event takes place; **Use …** keeps the current place. **Copy link** copies a link holding the place and time after the `#` (never sent to the server), to paste into an event's URL or notes; opening it shows that place and moment. Settings and saved places stay in the browser. On a phone the page is one column: scene, time, then location; drag to orbit and pinch to zoom.
+
+**Google Maps.** The 3D model is Google's Photorealistic 3D Tiles, read straight from Google's Map Tiles API. Google's terms do not allow its map services to be used “with or near a non-Google Map” (Maps Platform Terms §3.2.3(e)), so the 2D map, place search and the naming of a clicked spot also come from Google (Maps JavaScript API, Places API (New) and Geocoding). The About box gives the notice those terms require. Google lets apps keep its coordinates and looked-up names for at most 30 days, so a saved place found by search keeps only its place ID after 30 days and is looked up again when used; a spot chosen on the map keeps its coordinates but drops its looked-up name; recent places are forgotten after 30 days.
+
+**Setting up the key** (one Google Cloud project, with billing):
+
+1. Enable the **Maps JavaScript API**, **Places API (New)**, **Geocoding API** and **Map Tiles API**.
+2. Create an API key. Under *Application restrictions* choose *Websites* and add `https://davbachman.github.io/*` (browsers send only the site's origin with the 3D tile requests, so a path such as `/WhenScape/*` would block them). Under *API restrictions* allow only the four APIs above.
+3. Under *Quotas*, cap the daily requests, especially the Map Tiles API's root tileset requests (1,000 a month are free, then about $6 per 1,000). Visitors past the cap see the sky preview without the 3D model.
+4. In the GitHub repository, add the key as the Actions secret `GOOGLE_MAPS_API_KEY` (*Settings › Secrets and variables › Actions*), and set *Settings › Pages › Source* to **GitHub Actions**.
+
+The key is public in the page; the website and API restrictions are what protect it. Without a key the site still builds and works, without the map, search or 3D model. To try the site on your own computer, create a second key restricted to `http://127.0.0.1:4174/*` and paste it under **Settings › Developer › Your own Google Maps key**; it stays in that browser.
+
+```sh
+npm run build:site            # GOOGLE_MAPS_API_KEY=… to build with a key
+npm run preview:site          # http://127.0.0.1:4174/
+# In a second terminal, with the preview running:
+npm run test:site
+```
+
+The site tests replace Google Maps with a stand-in and weather with fixtures, so they need no key or network. They cover search, map clicks and time zones, saved places, time keys in the page and in the scene, pasted timed and all-day events, links reopening the same moment, and the phone layout.
+
 ## Development and verification
 
 ```sh
@@ -108,6 +136,9 @@ Mac verification on November 16, 2026 (Apple silicon, macOS 26.6.2, Xcode 27.2, 
 - `Web/scene.js`: renderer, fixed observer, geography and visual effects.
 - `Web/clouds.js`: sky cloud compositing with terrain/building depth masking.
 - `Web/astronomy.js` / `Web/weather.js`: independently testable calculations and weather acquisition.
+- `Site/site.js`: the browser app's state, location panel, time controls and bridge to the scene's frame.
+- `Site/google.js`: Google's map, place search and spot naming. `Site/time.js`: time zones with the browser's Intl. `Site/paste.js`: reading copied calendar events. `Site/link.js`: WhenScape links. `Site/places.js`: saved and recent places with Google's 30-day limit.
+- `scripts/build-site.mjs`: builds `dist/site`, with the key in `config.js`.
 
 The embedded page is served from an ephemeral loopback port because Cesium workers need a normal origin. That server serves bundled static files only; state and tokens pass directly through WKWebView. It binds only to `127.0.0.1`, validates paths/hosts, limits request sizes and lifetime, and has no write endpoint. External document navigation is blocked; explicit HTTPS attribution links open in the default browser. Calendar data remains native.
 

@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="See the light, sky and weather at a place and time, in 3D.">
+  <title>WhenScape</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M4 22h24' stroke='%23d97c2b' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M9 22a7 7 0 0 1 14 0' fill='%23f0a347'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./site.css">
+  <script src="./config.js"></script>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 22h24" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M9 22a7 7 0 0 1 14 0" fill="currentColor" opacity=".75"/></svg>
+        <span>WhenScape</span>
+      </div>
+      <div class="topbar-actions">
+        <button id="paste-event" class="tool" type="button" title="Use an event copied from your calendar (or press ⌘V)">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="4" y="3.5" width="12" height="14" rx="2"/><path d="M7.5 3.5V2.5h5v1M7 9h6M7 12h4"/></svg><span>Paste event</span>
+        </button>
+        <button id="copy-link" class="tool" type="button" title="Copy a link to this place and time, to paste into a calendar event">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8.5 11.5a3 3 0 0 0 4.2 0l2.8-2.8a3 3 0 0 0-4.2-4.2l-1 1M11.5 8.5a3 3 0 0 0-4.2 0l-2.8 2.8a3 3 0 0 0 4.2 4.2l1-1"/></svg><span>Copy link</span>
+        </button>
+        <button id="open-settings" class="tool icon-only" type="button" title="Settings" aria-label="Settings">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6h9M15 6h2M3 14h2M8 14h9"/><circle cx="13.5" cy="6" r="1.8"/><circle cx="6.5" cy="14" r="1.8"/></svg>
+        </button>
+        <button id="open-about" class="tool icon-only" type="button" title="About WhenScape" aria-label="About WhenScape">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5M10 6.2v.1"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="stage">
+      <div class="scene-frame">
+        <iframe id="scene" src="./scene/index.html" title="3D view of the place at the chosen time" allow="fullscreen"></iframe>
+        <div id="scene-overlay" class="scene-overlay" hidden>
+          <div class="overlay-card">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-6.1-6.5-11a6.5 6.5 0 0 1 13 0c0 4.9-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.4"/></svg>
+            <h2 id="overlay-title">Choose a location</h2>
+            <p id="overlay-body">Search or click the map to choose where to stand.</p>
+            <button id="keep-place" class="secondary-button" type="button" hidden></button>
+          </div>
+        </div>
+        <div id="scene-loading" class="scene-loading" role="status"><span class="spinner"></span><span id="scene-loading-text">Preparing the scene…</span></div>
+      </div>
+
+      <section class="time" aria-label="Time">
+        <div class="time-head">
+          <span id="event-label" class="event-label" hidden>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4" width="14" height="13" rx="2"/><path d="M3 8h14M7 2.5v3M13 2.5v3"/></svg>
+            <span id="event-title"></span>
+            <button id="reset-event" class="link-button" type="button">Reset to event</button>
+          </span>
+          <span id="explore-label" class="eyebrow">Explore a moment</span>
+          <span id="zone-label" class="zone" title="Times are shown in the place’s own time zone"></span>
+          <span class="spacer"></span>
+          <label class="check"><input id="range-toggle" type="checkbox"> Time range</label>
+          <label class="switch" title="Turn off weather to explore a clear astronomical sky"><input id="weather-toggle" type="checkbox" role="switch"><span class="track"></span>Weather</label>
+          <label class="switch" id="turntable-label" title="Slowly circle the aerial view around the flag when it is left alone for 30 seconds"><input id="turntable-toggle" type="checkbox" role="switch"><span class="track"></span>Turntable</label>
+        </div>
+        <div class="date-fields">
+          <div id="instant-fields" class="date-field">
+            <label for="instant-input">Date &amp; time</label>
+            <input id="instant-input" type="datetime-local" step="60">
+            <button class="small-button now" data-field="instant" type="button" title="Jump to the current date and time">Now</button>
+          </div>
+          <div id="range-fields" class="range-fields" hidden>
+            <div class="date-field">
+              <label for="start-input">From</label>
+              <input id="start-input" type="datetime-local" step="60">
+              <button class="small-button now" data-field="start" type="button" title="Start now">Now</button>
+            </div>
+            <div class="date-field">
+              <label for="end-input">To</label>
+              <input id="end-input" type="datetime-local" step="60">
+            </div>
+          </div>
+        </div>
+        <p id="all-day-note" class="note" hidden>All-day events start at local noon; the viewing time is editable.</p>
+        <div class="transport">
+          <button id="play-back" class="round-button" type="button" title="Play backward" aria-label="Play backward">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 5 3 10l7 5zM17 5l-7 5 7 5z"/></svg>
+          </button>
+          <button id="play" class="round-button primary" type="button" title="Play forward" aria-label="Play forward">
+            <svg class="play-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M6 4l10 6-10 6z"/></svg>
+            <svg class="pause-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 4h3v12h-3zM11.5 4h3v12h-3z"/></svg>
+          </button>
+          <input id="scrub" type="range" min="0" max="1" step="60" aria-label="Explore time" title="← → step 15 minutes · ⇧ for an hour · Space plays or pauses">
+          <select id="speed" aria-label="Playback speed">
+            <option value="60">1 min/s</option>
+            <option value="300">5 min/s</option>
+            <option value="1800">30 min/s</option>
+          </select>
+        </div>
+        <div class="status-line">
+          <span id="moment-text"></span>
+          <span id="weather-label"></span>
+        </div>
+      </section>
+
+      <aside class="location" aria-labelledby="location-title">
+        <div class="panel-head">
+          <h2 id="location-title"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 5.5 7.5 3.5l5 2 5-2v11l-5 2-5-2-5 2z"/><path d="M7.5 3.5v11M12.5 5.5v11"/></svg>Location</h2>
+          <span class="spacer"></span>
+          <div class="save-wrap">
+            <button id="save-place" class="tool icon-only" type="button" title="Save this place" aria-label="Save this place" aria-haspopup="dialog">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m10 2.8 2.2 4.6 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5-3.6-3.5 5-.7z"/></svg>
+            </button>
+            <div id="save-popover" class="popover" role="dialog" aria-label="Save this place" hidden>
+              <label for="save-name">Save as</label>
+              <input id="save-name" type="text" maxlength="40" placeholder="Name, such as Gym">
+              <div class="presets"><button type="button" class="chip" data-label="Home">Home</button><button type="button" class="chip" data-label="Work">Work</button></div>
+              <p id="save-taken" class="note" hidden></p>
+              <div class="popover-actions">
+                <button id="save-remove" type="button" class="link-button danger" hidden>Remove</button>
+                <span class="spacer"></span>
+                <button id="save-cancel" type="button" class="secondary-button">Cancel</button>
+                <button id="save-confirm" type="button" class="primary-button">Save</button>
+              </div>
+            </div>
+          </div>
+          <button id="recenter" class="tool icon-only" type="button" title="Center the map on the observer" aria-label="Center the map on the observer">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="5.5"/><path d="M10 1.5v4M10 14.5v4M1.5 10h4M14.5 10h4"/></svg>
+          </button>
+        </div>
+        <div class="search" role="search">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4.5 4.5"/></svg>
+          <input id="search" type="search" placeholder="Search for a place or address" autocomplete="off" spellcheck="false"
+            role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="results">
+          <span id="search-busy" class="spinner small" hidden></span>
+        </div>
+        <ul id="results" class="results" role="listbox" aria-label="Places" hidden></ul>
+        <div id="chips" class="chips" aria-label="Places to go"></div>
+        <p id="location-message" class="note warn" hidden></p>
+        <p id="search-message" class="note" hidden></p>
+        <div class="map-wrap">
+          <div id="map" class="map" aria-label="Map. Click to choose where to stand."></div>
+          <div id="map-unavailable" class="map-unavailable" hidden>
+            <p id="map-unavailable-text">The map isn’t available right now.</p>
+          </div>
+        </div>
+        <p class="map-hint">Click the map to choose where to stand</p>
+      </aside>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <dialog id="settings" class="sheet" aria-labelledby="settings-title">
+    <form method="dialog">
+      <h2 id="settings-title">Settings</h2>
+      <fieldset>
+        <legend>Scene</legend>
+        <label class="row">Detail
+          <select id="detail-select"><option value="low">Low</option><option value="balanced">Balanced</option><option value="high">High</option></select>
+        </label>
+        <label class="row check"><input id="motion-toggle" type="checkbox"> Reduce motion</label>
+        <label class="row check"><input id="turntable-setting" type="checkbox"> Turntable: slowly circle the aerial view when idle</label>
+        <label class="row check"><input id="snow-toggle" type="checkbox"> Illustrative white surfaces</label>
+        <p class="note">White surfaces are an illustration, not a prediction of accumulated snow.</p>
+        <label class="row check"><input id="shadows-toggle" type="checkbox"> Computed shadows on the 3D mesh</label>
+        <p class="note">The 3D mesh already shows the shadows from when it was photographed, and they can’t be removed. This adds shadows that follow the calculated Sun, so both sets appear. It also costs some performance.</p>
+      </fieldset>
+      <fieldset>
+        <legend>Developer</legend>
+        <label class="row check"><input id="diagnostics-toggle" type="checkbox"> Show scene diagnostics</label>
+        <label class="row stacked">Your own Google Maps key (optional)
+          <input id="key-input" type="text" autocomplete="off" spellcheck="false" placeholder="Leave empty to use this site’s key">
+        </label>
+        <p class="note">For trying WhenScape on your own computer. It is kept in this browser only and used instead of the site’s key.</p>
+      </fieldset>
+      <div class="sheet-actions"><button class="primary-button" value="done">Done</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="about" class="sheet" aria-labelledby="about-title">
+    <form method="dialog">
+      <h2 id="about-title">About WhenScape</h2>
+      <p>WhenScape shows the light, sky and weather at a place and time: the Sun and Moon where they are, clouds, rain or snow, and the day’s Sun path over a 3D model of the place.</p>
+      <h3>Using it with your calendar</h3>
+      <p>Copy an event in your calendar app and press ⌘V here (or use <strong>Paste event</strong>) to bring in its date and time, then choose where it takes place. <strong>Copy link</strong> makes a link to the current place and time that you can paste into an event’s URL or notes.</p>
+      <h3>Google Maps</h3>
+      <p>WhenScape includes Google Maps features and content: the map, place search and the 3D model. Your use of them is subject to the <a href="https://maps.google.com/help/terms_maps/" target="_blank" rel="noopener">Google Maps Additional Terms of Service</a> and the <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google Privacy Policy</a>.</p>
+      <h3>Privacy</h3>
+      <p>Saved places, recent places and settings stay in this browser. Place searches, the map and the 3D model come from Google, which receives your searches and the places you look at. Weather comes from Open-Meteo, which receives the place’s coordinates and the time. Your own location is read only when you choose Here, with your browser’s permission. Pasted calendar text is read in this page and not sent anywhere. Links keep the place and time after the “#”, which browsers do not send to this site.</p>
+      <h3>Data</h3>
+      <p>Astronomy is calculated. Weather uses forecasts, historical estimates or a five-year seasonal baseline from <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (free for non-commercial use). The 3D model was photographed in daylight and is relit approximately; it shows the place as captured, not as it was at a past date. Rendering by <a href="https://cesium.com/platform/cesiumjs/" target="_blank" rel="noopener">CesiumJS</a>.</p>
+      <div class="sheet-actions"><button class="primary-button" value="done">Done</button></div>
+    </form>
+  </dialog>
+
+  <script src="./site.js"></script>
+</body>
+</html>

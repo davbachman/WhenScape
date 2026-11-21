@@ -12,6 +12,15 @@ import { createDiagnostics } from './diagnostics.js';
 const C = window.Cesium;
 const $ = id => document.getElementById(id);
 const native = window.webkit?.messageHandlers?.scene;
+// In the browser version the scene runs in a frame of the WhenScape page,
+// which plays the part of the Mac app around it.
+const host = !native && window.parent !== window ? window.parent : null;
+function tellHost(message) {
+  if (native) native.postMessage(message);
+  else host?.postMessage(message, location.origin);
+}
+// Phones and tablets: pinch rather than scroll, and keep fewer tiles in memory.
+const coarsePointer = globalThis.matchMedia?.('(pointer: coarse)').matches ?? false;
 let viewer, buildings, terrain, state, astronomy, snowShader, tintShader, cloudStage;
 // True while `buildings` is the photorealistic mesh, which includes its own ground.
 let photoreal = false;
@@ -58,7 +67,7 @@ function postStatus(force = false) {
     sunAltitude: astronomy?.sun.altitude ?? 0,
     moonPhase: astronomy?.moonIlluminatedFraction ?? 0,
     weather, message: geometryMessage };
-  if (native) native.postMessage(payload);
+  tellHost(payload);
   // Kept available for integration tests; no calendar data or credentials are included.
   window.whenScapeStatus = payload;
 }
@@ -72,7 +81,7 @@ function showNotice(title, body) {
 function failScene(error) {
   const panel = $('fatal-message');
   panel.hidden = false;
-  panel.textContent = 'The 3D scene could not start. WebGL may be unavailable. You can still use the calendar and map. Try a lower scene detail setting or restart WhenScape.';
+  panel.textContent = 'The 3D scene could not start. WebGL may be unavailable. You can still choose places and times. Try a lower scene detail setting or restart WhenScape.';
   geometryMessage = '3D rendering unavailable';
   postStatus(true);
 }
@@ -129,6 +138,7 @@ function createViewer() {
   $('find-moon').addEventListener('click', () => lookAtSky('moon'));
   $('refresh-weather').addEventListener('click', () => { lastWeatherKey = undefined; queueWeather(); });
   installConditionsPin();
+  installHostForwarding();
   document.addEventListener('visibilitychange', applyActivity);
   setInterval(() => { if (sceneShown()) refreshWeatherIfNeeded(); }, 60_000);
   setInterval(checkIdleOrbit, 1000);
@@ -145,6 +155,28 @@ function installConditionsPin() {
     const pinned = bar.classList.toggle('pinned');
     bar.title = pinned ? 'Click to fold the details away' : 'Click to keep the details open';
     try { localStorage.setItem(key, pinned ? '1' : '0'); } catch {}
+  });
+}
+
+// In the browser, keys and pastes inside the scene's frame never reach the page
+// around it, so the ones the page handles are passed on: ← and → step through
+// time, Space plays, and a paste may be a copied calendar event.
+function installHostForwarding() {
+  if (!host) return;
+  document.addEventListener('keydown', e => {
+    if (e.defaultPrevented || e.altKey || e.metaKey || e.ctrlKey) return;
+    if (e.target.closest?.('input, textarea, select, [contenteditable]')) return;
+    const timeKey = e.key === 'ArrowLeft' || e.key === 'ArrowRight';
+    const play = e.key === ' ' && !e.target.closest?.('button, a, summary');
+    if (!timeKey && !play) return;
+    e.preventDefault();
+    tellHost({ type: 'key', key: e.key, shift: e.shiftKey });
+  });
+  document.addEventListener('paste', e => {
+    const text = e.clipboardData?.getData('text/plain');
+    if (!text) return;
+    e.preventDefault();
+    tellHost({ type: 'paste', text });
   });
 }
 
@@ -209,18 +241,32 @@ function resize() {
 
 function installRotation() {
   const canvas = viewer.canvas;
-  let pointer;
+  let pointer, pinch;
+  // Every finger or mouse button down on the scene; two fingers pinch to zoom.
+  const down = new Map();
+  const spread = () => { const [a, b] = [...down.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
   canvas.style.touchAction = 'none';
   canvas.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
     noteInteraction();
+    down.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    canvas.setPointerCapture(e.pointerId);
+    $('scene').focus({ preventScroll: true });
+    if (down.size === 2) { pointer = null; pinch = spread(); return; }
+    if (down.size > 2) return;
     // In the aerial view a sideways drag turns the scene like a turntable:
     // grabbing below the pin moves the near side, so the turn is reversed.
     pointer = { id: e.pointerId, x: e.clientX, y: e.clientY, turn: photoreal && belowPin(e) ? -1 : 1 };
-    canvas.setPointerCapture(e.pointerId);
-    $('scene').focus({ preventScroll: true });
   });
   canvas.addEventListener('pointermove', e => {
+    if (down.has(e.pointerId)) down.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && down.size === 2) {
+      const now = spread();
+      // Fingers moving apart zoom in, as a scroll up does.
+      if (now > 0 && pinch > 0) zoomBy(pinch / now);
+      pinch = now;
+      return;
+    }
     if (!pointer || pointer.id !== e.pointerId) return;
     heading -= (e.clientX - pointer.x) * 0.003 * pointer.turn;
     const tilt = (e.clientY - pointer.y) * 0.003;
@@ -231,7 +277,11 @@ function installRotation() {
     pointer.x = e.clientX; pointer.y = e.clientY;
     setCamera();
   });
-  const end = () => { pointer = null; };
+  const end = e => {
+    down.delete(e.pointerId);
+    if (down.size < 2) pinch = undefined;
+    if (pointer?.id === e.pointerId || down.size !== 1) pointer = null;
+  };
   canvas.addEventListener('pointerup', end);
   canvas.addEventListener('pointercancel', end);
   canvas.addEventListener('lostpointercapture', end);
@@ -239,12 +289,7 @@ function installRotation() {
   canvas.addEventListener('wheel', e => {
     noteInteraction();
     e.preventDefault();
-    const factor = Math.exp(clamp(e.deltaY, -200, 200) * 0.002);
-    // From the ground, or looking up from the air, scrolling zooms the lens
-    // like a telephoto; otherwise it moves the orbit in or out.
-    if (!photoreal || lookingUp()) setFov(viewer.camera.frustum.fov * factor);
-    else droneRange = clamp(droneRange * factor, droneLimits.minRange, droneLimits.maxRange);
-    setCamera();
+    zoomBy(Math.exp(clamp(e.deltaY, -200, 200) * 0.002));
   }, { passive: false });
   $('scene').addEventListener('keydown', e => {
     noteInteraction();
@@ -263,6 +308,15 @@ function installRotation() {
     else return;
     e.preventDefault(); setCamera();
   });
+}
+
+// Zooms by a factor: above 1 widens the view or moves the camera out. From the
+// ground, or looking up from the air, it zooms the lens like a telephoto;
+// otherwise it moves the orbit in or out.
+function zoomBy(factor) {
+  if (!photoreal || lookingUp()) setFov(viewer.camera.frustum.fov * factor);
+  else droneRange = clamp(droneRange * factor, droneLimits.minRange, droneLimits.maxRange);
+  setCamera();
 }
 
 // Whether a pointer event lies below the pin's ground point on screen. The
@@ -414,7 +468,9 @@ function normalizeHeading() { return (((heading * 180 / Math.PI) % 360) + 360) %
 
 function updateViewLabels() {
   $('view-kind').textContent = photoreal ? 'AERIAL VIEW' : 'GROUND VIEW';
-  $('rotate-hint').textContent = photoreal ? 'Drag to orbit, or up into the sky · scroll to zoom · ← → step time' : 'Drag to look · scroll to zoom · ← → step time';
+  $('rotate-hint').textContent = coarsePointer
+    ? (photoreal ? 'Drag to orbit, or up into the sky · pinch to zoom' : 'Drag to look · pinch to zoom')
+    : (photoreal ? 'Drag to orbit, or up into the sky · scroll to zoom · ← → step time' : 'Drag to look · scroll to zoom · ← → step time');
   $('scene').setAttribute('aria-label', photoreal
     ? 'Aerial view of the selected place. Drag, or use Option with the left and right arrow keys and the up and down arrow keys, to orbit and tilt; keep tilting up to look into the sky. Scroll or use plus and minus to zoom. Left and right arrow keys step through time.'
     : 'Ground-level scene. Drag to look around, or use Option with the left and right arrow keys and the up and down arrow keys. Scroll or use plus and minus to zoom. Left and right arrow keys step through time.');
@@ -650,7 +706,7 @@ async function placeObserver() {
   }
 }
 
-async function loadGeography(token) {
+async function loadGeography({ googleKey, ionToken: token }) {
   const generation = ++geometryGeneration;
   tileFailures = 0;
   groundReadings = [];
@@ -665,10 +721,12 @@ async function loadGeography(token) {
   updateViewLabels();
   viewer.scene.globe.show = true;
   viewer.terrainProvider = new C.EllipsoidTerrainProvider();
+  if (googleKey) return loadGoogleMesh(googleKey, generation);
   if (!token) {
     geometryMessage = 'Sky preview · terrain and buildings not loaded';
     $('geometry-status').textContent = geometryMessage;
-    showNotice('Connect geographic data', 'Add a Cesium ion token in Settings to load real terrain and buildings. The sky is calculated for your selected place and time.');
+    if (host) showNotice('Sky preview', 'The 3D model of this place isn’t available here. The sky, Sun, Moon and weather are calculated for your selected place and time.');
+    else showNotice('Connect geographic data', 'Add a Cesium ion token in Settings to load real terrain and buildings. The sky is calculated for your selected place and time.');
     placeObserver();
     postStatus(true);
     return;
@@ -685,46 +743,13 @@ async function loadGeography(token) {
   try {
     // Requested directly rather than through Cesium's helper, which remembers a
     // failed request and would keep failing after the token is corrected.
-    mesh = await C.Cesium3DTileset.fromUrl(await C.IonResource.fromAssetId(2275207), {
-      maximumScreenSpaceError: detailError(), showCreditsOnScreen: true,
-      // No camera collision: Cesium lifted the camera to a surface height it
-      // found under it, which moved it off the orbit by tens of metres and
-      // sometimes left the view under the mesh.
-      // The orbit's minimum height keeps the camera clear instead.
-      enableCollision: false,
-      // The aerial view sees to the horizon; load distant tiles more coarsely.
-      dynamicScreenSpaceError: true,
-      // Capture-time shadows are baked into the textures, so computed ones
-      // would double them; they are added only when the setting asks.
-      shadows: meshShadowMode() });
+    mesh = await C.Cesium3DTileset.fromUrl(await C.IonResource.fromAssetId(2275207), meshOptions());
   } catch (error) {
     mesh = undefined;
     meshProblem = describeIonError(error);
   }
   if (generation !== geometryGeneration) { mesh?.destroy(); return; }
-  if (mesh) {
-    photoreal = true;
-    resetGaze();
-    updateViewLabels();
-    // The mesh replaces the globe surface; drawing both makes them fight.
-    viewer.scene.globe.show = false;
-    buildings = viewer.scene.primitives.add(mesh);
-    buildings.tileFailed.addEventListener(() => {
-      tileFailures++;
-      geometryMessage = 'Some 3D tiles unavailable · coverage incomplete';
-      $('geometry-status').textContent = geometryMessage;
-      postStatus(true);
-    });
-    updateBuildingStyle();
-    geometryMessage = 'Photorealistic 3D mesh · captured in daylight, relit approximately';
-    $('geometry-status').textContent = geometryMessage;
-    await placeObserver();
-    if (generation !== geometryGeneration) return;
-    if (!geometryMessage.startsWith('Ground elevation')) $('setup-message').hidden = true;
-    viewer.scene.requestRender();
-    postStatus(true);
-    return;
-  }
+  if (mesh) return showMesh(mesh, generation);
   const results = await Promise.allSettled([
     C.createWorldTerrainAsync({ requestVertexNormals: true, requestWaterMask: false }),
     C.createOsmBuildingsAsync({ defaultColor: C.Color.fromCssColorString('#dbd5c8'),
@@ -773,6 +798,80 @@ async function loadGeography(token) {
   await placeObserver();
   viewer.scene.requestRender();
   postStatus(true);
+}
+
+function meshOptions() {
+  return {
+    maximumScreenSpaceError: detailError(), showCreditsOnScreen: true,
+    // No camera collision: Cesium lifted the camera to a surface height it
+    // found under it, which moved it off the orbit by tens of metres and
+    // sometimes left the view under the mesh.
+    // The orbit's minimum height keeps the camera clear instead.
+    enableCollision: false,
+    // The aerial view sees to the horizon; load distant tiles more coarsely.
+    dynamicScreenSpaceError: true,
+    // Capture-time shadows are baked into the textures, so computed ones
+    // would double them; they are added only when the setting asks.
+    shadows: meshShadowMode(),
+    // Cesium's default tile cache; phones get less memory.
+    cacheBytes: (coarsePointer ? 256 : 512) * 1024 * 1024,
+    maximumCacheOverflowBytes: (coarsePointer ? 128 : 512) * 1024 * 1024,
+  };
+}
+
+async function showMesh(mesh, generation) {
+  photoreal = true;
+  resetGaze();
+  updateViewLabels();
+  // The mesh replaces the globe surface; drawing both makes them fight.
+  viewer.scene.globe.show = false;
+  buildings = viewer.scene.primitives.add(mesh);
+  buildings.tileFailed.addEventListener(() => {
+    tileFailures++;
+    geometryMessage = 'Some 3D tiles unavailable · coverage incomplete';
+    $('geometry-status').textContent = geometryMessage;
+    postStatus(true);
+  });
+  updateBuildingStyle();
+  geometryMessage = 'Photorealistic 3D mesh · captured in daylight, relit approximately';
+  $('geometry-status').textContent = geometryMessage;
+  await placeObserver();
+  if (generation !== geometryGeneration) return;
+  if (!geometryMessage.startsWith('Ground elevation')) $('setup-message').hidden = true;
+  viewer.scene.requestRender();
+  postStatus(true);
+}
+
+// The browser version reads Google's tiles directly with the site's own key.
+// It has no Cesium ion terrain or buildings, so without the mesh the scene is
+// the sky preview.
+async function loadGoogleMesh(key, generation) {
+  geometryMessage = 'Loading the 3D model…';
+  $('geometry-status').textContent = geometryMessage;
+  showNotice('Loading this place', 'Preparing the 3D model of this place. Heights and small features may be approximate.');
+  let mesh;
+  try {
+    mesh = await C.createGooglePhotorealistic3DTileset({ key, onlyUsingWithGoogleGeocoder: true }, meshOptions());
+  } catch (error) {
+    if (generation !== geometryGeneration) return;
+    geometryMessage = 'Sky preview · 3D model unavailable';
+    $('geometry-status').textContent = geometryMessage;
+    showNotice('3D model unavailable', `${describeGoogleError(error)}. The sky, Sun, Moon and weather are still calculated for your selected place and time.`);
+    placeObserver();
+    postStatus(true);
+    return;
+  }
+  if (generation !== geometryGeneration) { mesh.destroy(); return; }
+  await showMesh(mesh, generation);
+}
+
+// A short reason for a failed Google tiles request, from its status code only.
+function describeGoogleError(error) {
+  const status = error?.statusCode;
+  if (status === 403) return 'Google refused this site’s key for 3D tiles (403)';
+  if (status === 429) return 'Today’s limit for 3D views has been reached (429)';
+  if (status) return `Google’s 3D tiles could not be loaded (${status})`;
+  return 'Google’s 3D tiles did not respond; check the network connection';
 }
 
 // A short reason for a failed Cesium ion request. Only the status code is
@@ -1175,7 +1274,7 @@ function update(next) {
       || Math.abs(next.latitude) > 90 || Math.abs(next.longitude) > 180
       || !Number.isFinite(new Date(next.time).getTime())) return;
   const previous = state;
-  state = { weatherEnabled: true, snowCover: false, reducedMotion: false, computedShadows: false, diagnostics: false, idleOrbit: true, detail: 'balanced', ionToken: '', ...next };
+  state = { weatherEnabled: true, snowCover: false, reducedMotion: false, computedShadows: false, diagnostics: false, idleOrbit: true, detail: 'balanced', ionToken: '', googleKey: '', ...next };
   state.time = new Date(state.time).toISOString();
   // Without a valid interval, use the 24 hours around the selected instant.
   const instant = Date.parse(state.time), from = Date.parse(state.start), until = Date.parse(state.end);
@@ -1205,9 +1304,11 @@ function update(next) {
     viewer.scene.shadowMap.size = state.detail === 'low' ? 1024 : 2048;
   }
   if (photoreal && buildings && previous?.computedShadows !== state.computedShadows) buildings.shadows = meshShadowMode();
-  if (activeToken !== state.ionToken) {
-    activeToken = state.ionToken;
-    loadGeography(activeToken).catch(error => {
+  // The browser version supplies a Google key; the Mac app a Cesium ion token.
+  const dataSource = state.googleKey ? `google:${state.googleKey}` : state.ionToken;
+  if (activeToken !== dataSource) {
+    activeToken = dataSource;
+    loadGeography(state).catch(error => {
       geometryMessage = 'Geographic data unavailable';
       $('geometry-status').textContent = geometryMessage;
       showNotice('Geographic data unavailable', `The scene could not be prepared: ${String(error?.message ?? error).slice(0, 160)}`);
@@ -1240,5 +1341,5 @@ try {
   // A real place and current instant, never invented calendar entries.
   update({ latitude: 34.0967, longitude: -117.7198, location: 'Claremont, California',
     time: new Date().toISOString(), weatherEnabled: true, ionToken: '' });
-  if (native) native.postMessage({ type: 'ready' });
+  tellHost({ type: 'ready' });
 } catch (error) { failScene(error); }

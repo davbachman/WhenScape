@@ -1,0 +1,53 @@
+name: Publish the browser app
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Build the site
+        run: npm run build:site
+        env:
+          # Public in the page; restrict it in Google Cloud to this site and these APIs.
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+      - name: Install browser for site tests
+        run: npx playwright install --with-deps chromium
+      - name: Browser tests of the site
+        run: |
+          node scripts/preview.mjs --site &
+          preview=$!
+          for i in $(seq 30); do curl -sf http://127.0.0.1:4174/ >/dev/null && break; sleep 1; done
+          status=0
+          mkdir -p artifacts
+          npm run test:site || status=$?
+          kill $preview
+          exit $status
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
