@@ -12,24 +12,21 @@ import { AirQualityClient, airQualityCoverage, aqiCategory, sampleAt, worstBetwe
 import { WeatherController } from './weather.js';
 import { createCloudStage } from './clouds.js';
 import { flagExtension, flagShape, flagShadow, shadowOffset } from './flag.js';
-import { createTintShader, createSnowShader, meshTone } from './meshlook.js';
+import { createTintShader, meshTone } from './meshlook.js';
 import { createDiagnostics } from './diagnostics.js';
 
 const C = window.Cesium;
 const $ = id => document.getElementById(id);
 // The scene runs in a frame of the WhenScape page, which keeps the place and
-// time and passes them in. (`native` is the bridge of the retired Mac app,
-// which hosted the scene in a web view; nothing uses it now.)
-const native = window.webkit?.messageHandlers?.scene;
-const host = !native && window.parent !== window ? window.parent : null;
+// time and passes them in. On its own, as its tests load it, it has no host.
+const host = window.parent !== window ? window.parent : null;
 function tellHost(message) {
-  if (native) native.postMessage(message);
-  else host?.postMessage(message, location.origin);
+  host?.postMessage(message, location.origin);
 }
 // Phones and tablets: pinch rather than scroll, and keep fewer tiles in memory.
 const coarsePointer = globalThis.matchMedia?.('(pointer: coarse)').matches ?? false;
-let viewer, buildings, terrain, state, astronomy, snowShader, tintShader, cloudStage;
-// True while `buildings` is the photorealistic mesh, which includes its own ground.
+let viewer, buildings, state, astronomy, tintShader, cloudStage;
+// True while `buildings` holds Google's photorealistic mesh, which includes its own ground.
 let photoreal = false;
 let heading = 0, pitch = 0.025, eyeHeight = 1.7;
 // Aerial view used with the photorealistic mesh, which is captured from the
@@ -54,7 +51,7 @@ let series = [], seriesKey, seriesAbort, moonTimes, moonKey, timelineEvents = {}
 const units = unitsFor(globalThis.navigator?.language ?? 'en-US');
 const cloudDrift = { x: 0, y: 0 };
 let geometryGeneration = 0, positionGeneration = 0, weatherGeneration = 0;
-let activeToken, terrainAvailable = false, geometryMessage = 'Geographic data unavailable';
+let activeKey, geometryMessage = 'Geographic data unavailable';
 let weather = { kind: 'missing', label: 'Weather unavailable', detail: 'Choose a place and time.', renderPrecipitation: false };
 let lastWeatherKey, lastWeatherPlace, weatherTimer, weatherAbort, lastAstronomyKey;
 let lastWeatherAttempt = 0;
@@ -96,7 +93,7 @@ function showNotice(title, body) {
 function failScene(error) {
   const panel = $('fatal-message');
   panel.hidden = false;
-  panel.textContent = 'The 3D scene could not start. WebGL may be unavailable. You can still choose places and times. Try a lower scene detail setting or restart WhenScape.';
+  panel.textContent = 'The 3D scene could not start. WebGL may be unavailable. You can still choose places and times. Try a lower scene detail setting, or reload the page.';
   geometryMessage = '3D rendering unavailable';
   postStatus(true);
 }
@@ -724,7 +721,7 @@ function diagnosticRows() {
   const ground = eyeHeight - 1.7;
   const fixed = (value, digits = 1) => Number.isFinite(value) ? value.toFixed(digits) : '–';
   return {
-    view: photoreal ? 'aerial · photorealistic mesh' : buildings ? 'ground · terrain + OSM buildings' : 'sky preview',
+    view: photoreal ? 'aerial · photorealistic mesh' : 'sky preview',
     camera: `${fixed(camera.height)} m (${fixed(camera.height - ground)} m above ground)`,
     ground: `${fixed(ground)} m`,
     readings: groundReadings.length ? groundReadings.map(h => fixed(h)).join(' ') : undefined,
@@ -734,7 +731,7 @@ function diagnosticRows() {
     flag: photoreal ? `${fixed(flagHeight())} m` : undefined,
     globe: viewer.scene.globe ? `${viewer.scene.globe.show ? 'shown' : 'hidden'} · tiles ${viewer.scene.globe.tilesLoaded ? 'loaded' : 'loading'}` : 'removed',
     tiles: buildings ? `${buildings.tilesLoaded ? 'loaded' : 'loading'} · ${(buildings.totalMemoryUsageInBytes / 1048576).toFixed(0)} MB · ${tileFailures} failed` : 'none',
-    frames: `${frameRate}/s${sceneShown() ? '' : ' · paused (window hidden)'}${activity.active ? '' : ' · app in background'}`,
+    frames: `${frameRate}/s${sceneShown() ? '' : ' · paused (page hidden)'}${activity.active ? '' : ' · window in background'}`,
     meteors: (() => { const m = meteorView?.stats(); return m?.showers ? `${m.showers} shower${m.showers === 1 ? '' : 's'} · ${m.perSecond.toFixed(2)} streaks/s · ${m.live} in flight${m.animate ? '' : ' · still'}` : undefined; })(),
     weather: `${weather.kind}${weather.validAt ? ` · ${weather.validAt.slice(0, 16)}Z` : ''}`,
   };
@@ -749,7 +746,7 @@ async function placeObserver() {
   setCamera();
   if (photoreal) {
     try {
-      // The mesh is the ground here, so sample it instead of a terrain provider.
+      // The mesh is the ground, so its height is sampled.
       // Sample the pin and a ring of points a few metres around it and use a
       // low one: the mesh is a surface, so a pin under a tree or at a roof
       // edge would otherwise put the ground at canopy or roof height, and the
@@ -774,34 +771,15 @@ async function placeObserver() {
       $('geometry-status').textContent = geometryMessage;
       postStatus(true);
     }
-    return;
-  }
-  if (!terrain || !terrainAvailable) return;
-  try {
-    const [position] = await C.sampleTerrainMostDetailed(terrain, [C.Cartographic.fromDegrees(longitude, latitude)]);
-    if (generation !== positionGeneration) return;
-    if (!Number.isFinite(position.height)) throw new Error('No terrain height');
-    eyeHeight = position.height + 1.7;
-    setCamera();
-  } catch {
-    if (generation !== positionGeneration) return;
-    // Never pretend ellipsoid height is ground level when terrain sampling fails.
-    showNotice('Ground elevation unavailable', 'Terrain height could not be resolved at this pin. Choose a nearby point on the map or try again when the data connection is available.');
-    geometryMessage = 'Ground elevation unresolved · viewpoint approximate';
-    $('geometry-status').textContent = geometryMessage;
-    postStatus(true);
   }
 }
 
-async function loadGeography({ googleKey, ionToken: token }) {
+async function loadGeography({ googleKey }) {
   const generation = ++geometryGeneration;
   tileFailures = 0;
   groundReadings = [];
   ++positionGeneration;
-  terrainAvailable = false;
-  terrain = undefined;
   if (buildings) { viewer.scene.primitives.remove(buildings); buildings = undefined; }
-  if (snowShader) { snowShader.destroy(); snowShader = undefined; }
   if (tintShader) { tintShader.destroy(); tintShader = undefined; }
   photoreal = false;
   resetGaze();
@@ -809,80 +787,10 @@ async function loadGeography({ googleKey, ionToken: token }) {
   viewer.scene.globe.show = true;
   viewer.terrainProvider = new C.EllipsoidTerrainProvider();
   if (googleKey) return loadGoogleMesh(googleKey, generation);
-  if (!token) {
-    geometryMessage = 'Sky preview · terrain and buildings not loaded';
-    $('geometry-status').textContent = geometryMessage;
-    showNotice('Sky preview', 'The 3D model of this place isn’t available here. The sky, Sun, Moon and weather are calculated for your selected place and time.');
-    placeObserver();
-    postStatus(true);
-    return;
-  }
-  C.Ion.defaultAccessToken = token;
-  geometryMessage = 'Loading terrain and buildings…';
+  geometryMessage = 'Sky preview · 3D model not loaded';
   $('geometry-status').textContent = geometryMessage;
-  showNotice('Loading this place', 'Preparing the 3D model of this place. Heights and small features may be approximate.');
-  // First choice: Google Photorealistic 3D Tiles through Cesium ion (asset
-  // 2275207), a textured mesh of real buildings, trees and ground. The ion
-  // account must have that asset added; otherwise fall back to World Terrain
-  // with OSM building boxes below.
-  let mesh, meshProblem;
-  try {
-    // Requested directly rather than through Cesium's helper, which remembers a
-    // failed request and would keep failing after the token is corrected.
-    mesh = await C.Cesium3DTileset.fromUrl(await C.IonResource.fromAssetId(2275207), meshOptions());
-  } catch (error) {
-    mesh = undefined;
-    meshProblem = describeIonError(error);
-  }
-  if (generation !== geometryGeneration) { mesh?.destroy(); return; }
-  if (mesh) return showMesh(mesh, generation);
-  const results = await Promise.allSettled([
-    C.createWorldTerrainAsync({ requestVertexNormals: true, requestWaterMask: false }),
-    C.createOsmBuildingsAsync({ defaultColor: C.Color.fromCssColorString('#dbd5c8'),
-      maximumScreenSpaceError: detailError(), shadows: C.ShadowMode.ENABLED }),
-  ]);
-  if (generation !== geometryGeneration) {
-    if (results[1].status === 'fulfilled') results[1].value.destroy();
-    return;
-  }
-  const [terrainResult, buildingsResult] = results;
-  if (terrainResult.status === 'fulfilled') {
-    terrain = terrainResult.value;
-    terrainAvailable = true;
-    viewer.terrainProvider = terrain;
-    terrain.errorEvent.addEventListener(() => {
-      geometryMessage = 'Some terrain tiles unavailable · retrying';
-      $('geometry-status').textContent = geometryMessage;
-      postStatus(true);
-    });
-  }
-  if (buildingsResult.status === 'fulfilled' && terrainAvailable) {
-    buildings = viewer.scene.primitives.add(buildingsResult.value);
-    buildings.tileFailed.addEventListener(() => {
-      tileFailures++;
-      geometryMessage = 'Some building tiles unavailable · coverage incomplete';
-      $('geometry-status').textContent = geometryMessage;
-      postStatus(true);
-    });
-    updateBuildingStyle();
-  } else if (buildingsResult.status === 'fulfilled') {
-    // OSM geometry is aligned to World Terrain; without it buildings can float.
-    buildingsResult.value.destroy();
-  }
-  if (terrainAvailable && buildings) {
-    geometryMessage = `OSM buildings · photorealistic mesh unavailable: ${meshProblem}`;
-    $('setup-message').hidden = true;
-  } else if (terrainAvailable) {
-    geometryMessage = 'Terrain only · buildings unavailable';
-    showNotice('Building data unavailable', 'Terrain is available, but buildings could not load. Check your Cesium token’s asset access and network connection.');
-  } else {
-    geometryMessage = 'Sky preview · geographic data unavailable';
-    const terrainProblem = describeIonError(terrainResult.reason);
-    showNotice('Geographic data unavailable', `Photorealistic mesh: ${meshProblem}. Terrain: ${terrainProblem}. The calculated sky remains available; terrain and buildings have not loaded.`);
-  }
-  $('geometry-status').textContent = geometryMessage;
-  await placeObserver();
-  viewer.scene.requestRender();
+  showNotice('Sky preview', 'The 3D model of this place isn’t available here. The sky, Sun, Moon and weather are calculated for your selected place and time.');
+  placeObserver();
   postStatus(true);
 }
 
@@ -928,9 +836,8 @@ async function showMesh(mesh, generation) {
   postStatus(true);
 }
 
-// The browser version reads Google's tiles directly with the site's own key.
-// It has no Cesium ion terrain or buildings, so without the mesh the scene is
-// the sky preview.
+// Google's tiles are read directly with the site's own key. Without them the
+// scene is the sky preview.
 async function loadGoogleMesh(key, generation) {
   geometryMessage = 'Loading the 3D model…';
   $('geometry-status').textContent = geometryMessage;
@@ -960,37 +867,18 @@ function describeGoogleError(error) {
   return 'Google’s 3D tiles did not respond; check the network connection';
 }
 
-// A short reason for a failed Cesium ion request. Only the status code is
-// used, so no token or request address can reach the screen.
-function describeIonError(error) {
-  const status = error?.statusCode;
-  if (status === 401) return 'Cesium ion rejected the token (401)';
-  if (status === 403 || status === 404) return `this token cannot read the asset (${status})`;
-  if (status) return `request failed (${status})`;
-  return 'no response; check the network connection';
-}
-
 // The mesh both casts and receives computed shadows when they are on: with
 // the globe hidden, the mesh is the only surface they can fall on.
 function meshShadowMode() { return state?.computedShadows ? C.ShadowMode.ENABLED : C.ShadowMode.DISABLED; }
 
 function detailError() { return state?.detail === 'high' ? 8 : state?.detail === 'low' ? 32 : 16; }
 
+// The mesh's look follows the light and weather through its shader (meshlook.js).
 function updateBuildingStyle() {
-  if (!buildings) return;
-  if (photoreal) {
-    if (!tintShader) tintShader = createTintShader(C);
-    updateMeshShader();
-    buildings.customShader = tintShader;
-    return;
-  }
-  // A uniform matte style deliberately avoids photographic lighting baked into textures.
-  if (!buildings.style) buildings.style = new C.Cesium3DTileStyle({ color: "color('#dbd5c8')" });
-  const white = state.snowCover || (state.weatherEnabled && (weather.snowDepth ?? 0) > 0);
-  if (white) {
-    if (!snowShader) snowShader = createSnowShader(C);
-    buildings.customShader = snowShader;
-  } else { buildings.customShader = undefined; }
+  if (!buildings || !photoreal) return;
+  if (!tintShader) tintShader = createTintShader(C);
+  updateMeshShader();
+  buildings.customShader = tintShader;
 }
 
 // Feed the mesh shader the current sky, weather and pin; see meshlook.js.
@@ -1320,7 +1208,7 @@ function scheduleEffects() {
 
 // Foreground precipitation and haze are illustrative viewport effects. Clouds
 // are rendered separately against Cesium's scene depth so they stay behind
-// terrain and buildings instead of cutting across them at a screen-space line.
+// the 3D model instead of cutting across it at a screen-space line.
 function drawEffects(delta) {
   if (!state || !astronomy) return;
   ctx.clearRect(0, 0, width, height);
@@ -1426,7 +1314,7 @@ function update(next) {
       || Math.abs(next.latitude) > 90 || Math.abs(next.longitude) > 180
       || !Number.isFinite(new Date(next.time).getTime())) return;
   const previous = state;
-  state = { weatherEnabled: true, snowCover: false, reducedMotion: false, computedShadows: false, diagnostics: false, idleOrbit: true, detail: 'balanced', ionToken: '', googleKey: '', ...next };
+  state = { weatherEnabled: true, snowCover: false, reducedMotion: false, computedShadows: false, diagnostics: false, idleOrbit: true, detail: 'balanced', googleKey: '', ...next };
   state.time = new Date(state.time).toISOString();
   // Without a valid interval, use the 24 hours around the selected instant.
   const instant = Date.parse(state.time), from = Date.parse(state.start), until = Date.parse(state.end);
@@ -1456,11 +1344,9 @@ function update(next) {
     viewer.scene.shadowMap.size = state.detail === 'low' ? 1024 : 2048;
   }
   if (photoreal && buildings && previous?.computedShadows !== state.computedShadows) buildings.shadows = meshShadowMode();
-  // The page supplies a Google key. A Cesium ion token, for terrain and OSM
-  // buildings, came from the retired Mac app; the page never sends one.
-  const dataSource = state.googleKey ? `google:${state.googleKey}` : state.ionToken;
-  if (activeToken !== dataSource) {
-    activeToken = dataSource;
+  // The page supplies the Google key for the 3D model; a new key reloads it.
+  if (activeKey !== state.googleKey) {
+    activeKey = state.googleKey;
     loadGeography(state).catch(error => {
       geometryMessage = 'Geographic data unavailable';
       $('geometry-status').textContent = geometryMessage;
@@ -1494,6 +1380,6 @@ try {
   createViewer();
   // A real place and current instant, never invented calendar entries.
   update({ latitude: 34.0967, longitude: -117.7198, location: 'Claremont, California',
-    time: new Date().toISOString(), weatherEnabled: true, ionToken: '' });
+    time: new Date().toISOString(), weatherEnabled: true });
   tellHost({ type: 'ready' });
 } catch (error) { failScene(error); }

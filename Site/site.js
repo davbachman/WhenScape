@@ -67,7 +67,7 @@ function sceneState() {
     time: app.instant.toISOString(), start: start.toISOString(), end: end.toISOString(), rangeEnabled: app.rangeEnabled,
     timeZone: app.timeZone, weatherEnabled: prefs.weatherEnabled, snowCover: prefs.snowCover,
     reducedMotion: app.reducedMotion, computedShadows: prefs.computedShadows, diagnostics: app.diagnostics,
-    idleOrbit: prefs.idleOrbit, detail: prefs.detail, ionToken: '', googleKey: app.googleKey,
+    idleOrbit: prefs.idleOrbit, detail: prefs.detail, googleKey: app.googleKey,
   };
 }
 

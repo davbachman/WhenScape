@@ -6,8 +6,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
-// This fixture has real depth-writing geometry but no ion token, terrain
-// service, imagery or weather requests. It isolates cloud compositing from
+// This fixture has real depth-writing geometry but no 3D model, imagery or
+// weather requests. It isolates cloud compositing from
 // the lighting changes that accompany the app's Weather switch.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const html = `<!doctype html><html><head><style>

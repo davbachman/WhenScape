@@ -65,20 +65,6 @@ export function createTintShader(C) {
   });
 }
 
-/** White on upward-facing surfaces, for the plain OSM buildings. */
-export function createSnowShader(C) {
-  return new C.CustomShader({
-    uniforms: { u_snowAmount: { type: C.UniformType.FLOAT, value: 0.72 } },
-    fragmentShaderText: `void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material) {
-      vec3 normalWC = normalize(czm_inverseViewRotation * fsInput.attributes.normalEC);
-      vec3 upWC = normalize(fsInput.attributes.positionWC);
-      float facingUp = smoothstep(0.4, 0.85, dot(normalWC, upWC));
-      material.diffuse = mix(material.diffuse, vec3(0.88, 0.91, 0.94), facingUp * u_snowAmount);
-      material.roughness = 1.0;
-    }`,
-  });
-}
-
 const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 const blend = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
 

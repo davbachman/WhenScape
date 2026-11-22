@@ -73,7 +73,7 @@ try {
   assert.match(await page.locator('#heading').textContent(), /0°/);
 
   const state = { latitude: 34.0967, longitude: -117.7198, location: 'Claremont, California',
-    time: '2024-06-21T20:00:00Z', ionToken: '', weatherEnabled: false, reducedMotion: true };
+    time: '2024-06-21T20:00:00Z', weatherEnabled: false, reducedMotion: true };
   await page.evaluate(state => window.whenScape.update(state), state);
   assert.equal(await page.locator('#weather-kind').textContent(), 'CLEAR-SKY PREVIEW');
   assert.equal(await page.locator('#wind-line').isVisible(), false);
