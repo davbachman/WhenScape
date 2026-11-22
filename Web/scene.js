@@ -1,9 +1,14 @@
-import { calculateAstronomy, clamp, compassName, sunTrack, moonEvents } from './astronomy.js';
-import { unitsFor, formatTemperature, conditionName, windReadout, notableGust, summaryLine } from './briefing.js';
+import { calculateAstronomy, clamp, compassName, sunTrack, moonEvents, planetPositions } from './astronomy.js';
+import { unitsFor, formatTemperature, conditionName, windReadout, notableGust, summaryLine, planetsPhrase, showerPhrase, skyPlace, airPhrase } from './briefing.js';
 import { timelineMarkup } from './timeline.js';
 import { clockLabel } from './guides.js';
 import { createGuides } from './guideview.js';
 import { createConstellations } from './constellationview.js';
+import { createPlanets } from './planetview.js';
+import { createMeteors, SPEEDUP } from './meteorview.js';
+import { activeShowers } from './meteors.js';
+import { skyFrame } from './skyframe.js';
+import { AirQualityClient, airQualityCoverage, aqiCategory, sampleAt, worstBetween } from './airquality.js';
 import { WeatherController } from './weather.js';
 import { createCloudStage } from './clouds.js';
 import { flagExtension, flagShape, flagShadow, shadowOffset } from './flag.js';
@@ -38,6 +43,11 @@ let guides, track, trackKey;
 let constellations, showConstellations = false;
 const CONSTELLATIONS_KEY = 'whenscape.constellations';
 // Figures for the diagnostics readout only.
+// The planets and meteor showers at the selected moment, and their views.
+let planetView, meteorView, skyKey, skyNow = { planets: [], showers: [] };
+// Air quality: hourly samples for the place and days in view, while loading or failed.
+const airClient = new AirQualityClient();
+let air = { key: undefined, samples: null, failed: false };
 let diagnostics, groundReadings = [], tileFailures = 0, framesRendered = 0, frameRate = 0;
 let series = [], seriesKey, seriesAbort, moonTimes, moonKey, timelineEvents = {};
 const units = unitsFor(globalThis.navigator?.language ?? 'en-US');
@@ -129,6 +139,8 @@ function createViewer() {
   guides = createGuides(C, viewer);
   constellations = createConstellations(C, viewer);
   try { showConstellations = localStorage.getItem(CONSTELLATIONS_KEY) === '1'; } catch {}
+  planetView = createPlanets(C, viewer);
+  meteorView = createMeteors(C, viewer);
   diagnostics = createDiagnostics(document.body, diagnosticRows);
   viewer.scene.postRender.addEventListener(() => { framesRendered++; });
   setInterval(() => { frameRate = framesRendered; framesRendered = 0; }, 1000);
@@ -145,7 +157,7 @@ function createViewer() {
   $('show-constellations').addEventListener('click', () => {
     showConstellations = !showConstellations;
     try { localStorage.setItem(CONSTELLATIONS_KEY, showConstellations ? '1' : '0'); } catch {}
-    updateConstellations();
+    updateSky();
     viewer.scene.requestRender();
   });
   $('refresh-weather').addEventListener('click', () => { lastWeatherKey = undefined; queueWeather(); });
@@ -436,12 +448,31 @@ function lookAtSky(body) {
   if (duration) requestAnimationFrame(step); else step(start);
 }
 
-// The constellations turn with the sky, so they follow the scene's time and place.
-function updateConstellations() {
-  if (!constellations || !state) return;
-  constellations.update({ shown: showConstellations, time: viewer.clock.currentTime,
-    center: C.Cartesian3.fromDegrees(state.longitude, state.latitude, eyeHeight - 1.7),
-    sunAltitude: astronomy?.sun.altitude ?? 0 });
+// The planets and meteor showers at the selected moment and place.
+function calculateSky() {
+  const key = `${state.latitude},${state.longitude},${state.time}`;
+  if (key === skyKey) return;
+  skyKey = key;
+  try {
+    skyNow = {
+      planets: planetPositions(state),
+      showers: activeShowers({ ...state, sunAltitude: astronomy.sun.altitude, moonAltitude: astronomy.moon.altitude,
+        moonFraction: astronomy.moonIlluminatedFraction }),
+    };
+  } catch { skyNow = { planets: [], showers: [] }; }
+}
+
+// Constellations, planets and meteor radiants turn with the sky, so they
+// follow the scene's time and place; meteors fall only while the scene shows.
+function updateSky() {
+  if (!constellations || !state || !astronomy) return;
+  calculateSky();
+  const { frame, rotation } = skyFrame(C, viewer.clock.currentTime, C.Cartesian3.fromDegrees(state.longitude, state.latitude, eyeHeight - 1.7));
+  const sunAltitude = astronomy.sun.altitude;
+  constellations.update({ shown: showConstellations, frame, sunAltitude });
+  planetView.update({ frame, planets: skyNow.planets, sunAltitude });
+  const clouds = state.weatherEnabled && weather.kind !== 'missing' ? clamp((weather.cloudCover ?? 0) / 100, 0, 1) : 0;
+  meteorView.update({ frame, rotation, showers: skyNow.showers, clouds, animate: sceneShown() && !state.reducedMotion });
   const button = $('show-constellations');
   button.setAttribute('aria-pressed', String(showConstellations));
   button.title = showConstellations ? 'Hide the constellations' : 'Show the constellations';
@@ -704,6 +735,7 @@ function diagnosticRows() {
     tiles: buildings ? `${buildings.tilesLoaded ? 'loaded' : 'loading'} · ${(buildings.totalMemoryUsageInBytes / 1048576).toFixed(0)} MB · ${tileFailures} failed` : 'none',
     frames: `${frameRate}/s${sceneShown() ? '' : ' · paused (window hidden)'}${activity.active ? '' : ' · app in background'}`,
     weather: `${weather.kind}${weather.validAt ? ` · ${weather.validAt.slice(0, 16)}Z` : ''}`,
+    meteors: (() => { const m = meteorView?.stats(); return m?.showers ? `${m.showers} shower${m.showers === 1 ? '' : 's'} · ${m.perSecond.toFixed(2)} streaks/s · ${m.live} in flight${m.animate ? '' : ' · still'}` : undefined; })(),
   };
 }
 
@@ -1019,6 +1051,7 @@ function updateLightAndWeather() {
   $('snow-label').textContent = state.snowCover ? 'Illustrative white surfaces · no depth simulation'
     : 'Snow cover from an available depth estimate';
   updateBuildingStyle();
+  updateSky();
   updateWeatherHUD();
   updateFlag();
   viewer.scene.requestRender();
@@ -1046,6 +1079,39 @@ function updateWeatherHUD() {
   if (weather.cloudCover == null) detailLines.push('Cloud cover unavailable; sky appearance is illustrative.');
   if (weather.kind === 'forecast' && Date.now() - Date.parse(weather.fetchedAt) > 2 * 60 * 60_000) detailLines.push('Forecast data is stale. Refresh when a connection is available.');
   detailLines.push('The sky, clouds, haze, shadows and precipitation are illustrative.');
+  const now = Date.parse(state.time);
+  const dateLabel = ms => new Intl.DateTimeFormat(navigator.language, { month: 'short', day: 'numeric', timeZone: zone || 'UTC' }).format(ms);
+
+  // The sky beyond the Sun and Moon: planets above the horizon, and meteor showers.
+  const planetsUp = skyNow.planets.filter(p => p.altitude > 1).sort((a, b) => a.magnitude - b.magnitude);
+  detailLines.push(planetsUp.length
+    ? `Planets above the horizon: ${planetsUp.map(p => `${p.name}, ${skyPlace(p.altitude, p.azimuth)}, magnitude ${p.magnitude.toFixed(1)}`).join('; ')}.`
+    : 'No planets above the horizon.');
+  const moonDims = astronomy.moon.altitude > 0 && astronomy.moonIlluminatedFraction > 0.3;
+  for (const shower of skyNow.showers) {
+    const where = shower.altitude > 0 ? `radiant ${skyPlace(shower.altitude, shower.azimuth)}` : 'radiant below the horizon';
+    const rate = Math.round(shower.rate);
+    const seen = astronomy.sun.altitude < -12
+      ? `about ${rate >= 1 ? rate : 'under one'} an hour from a dark site with no cloud${moonDims ? `, the Moon (${Math.round(astronomy.moonIlluminatedFraction * 100)}% lit) hiding the fainter ones` : ''}`
+      : 'none visible until the sky is dark';
+    detailLines.push(`${shower.name} (meteor shower): peak about ${dateLabel(shower.peak)}, up to ${Math.round(shower.peakZHR)} an hour at best. Now ${where}; ${seen}.`);
+  }
+  if (skyNow.showers.length) detailLines.push(`Meteor streaks in the scene come ${SPEEDUP} times as often as real ones. Shower dates, radiants and rates follow the International Meteor Organization's list, approximately.`);
+
+  // Air quality, as the US index, for the moment or the worst hour of an event.
+  const ranged = !!state.rangeEnabled && Date.parse(state.end) > Date.parse(state.start);
+  const coverage = airQualityCoverage(now);
+  const airNow = known ? sampleAt(air.samples, now) : null;
+  const airWorst = known && ranged ? worstBetween(air.samples, Date.parse(state.start), Date.parse(state.end)) : null;
+  const airShown = airWorst ?? airNow;
+  if (airShown) {
+    const category = aqiCategory(airShown.aqi);
+    detailLines.push(`Air quality${airWorst ? ', worst hour of the event' : ''}: US AQI ${airShown.aqi} (${category.name})${airShown.pollutant ? `, set by ${airShown.pollutant}` : ''}` +
+      `${airShown.pm25 != null ? `; PM2.5 ${airShown.pm25.toFixed(1)} µg/m³` : ''}${airShown.ozone != null ? `; ozone ${Math.round(airShown.ozone)} µg/m³` : ''}${airWorst && zone ? ` at ${clockLabel(airWorst.time, zone)}` : ''}.`);
+    detailLines.push('Air quality is a model estimate from the Copernicus Atmosphere Monitoring Service (CAMS) via Open-Meteo, on a grid about 45 km across (11 km in Europe). The index averages particles over 24 hours and ozone over 8.');
+  } else if (known && coverage === 'too-far-ahead') detailLines.push('Air quality forecasts reach about five days ahead.');
+  else if (known && coverage === 'too-early') detailLines.push('Air quality estimates begin in August 2022.');
+  else if (known && air.failed) detailLines.push('Air quality could not be retrieved.');
   $('weather-source-detail').textContent = detailLines.filter(Boolean).join('\n');
 
   // Headline: temperature and condition, or the light when there is no weather.
@@ -1061,9 +1127,8 @@ function updateWeatherHUD() {
   $('weather-detail').hidden = !$('weather-detail').textContent;
 
   // One sentence for the whole picture.
-  const day = ensureTrack(), now = Date.parse(state.time);
+  const day = ensureTrack();
   const start = Date.parse(state.start), end = Date.parse(state.end);
-  const ranged = !!state.rangeEnabled && end > start;
   const summary = { weather: known ? weather : null, units, sun: {
     time: now, start, end, rangeEnabled: ranged, sunrise: day.sunrise?.time, sunset: day.sunset?.time,
     sunUpAtStart: ranged ? day.at(start).altitude > 0 : undefined, sunUp: astronomy.sun.altitude > 0 } };
@@ -1083,6 +1148,20 @@ function updateWeatherHUD() {
   const moonUp = astronomy.moon.altitude > 0, nextMoon = moonUp ? moonTimes?.set : moonTimes?.rise;
   $('moon-line').textContent = `${astronomy.moonPhaseName} · ${Math.round(astronomy.moonIlluminatedFraction * 100)}% lit` +
     (zone && nextMoon ? ` · ${moonUp ? 'sets' : 'rises'} ${clockLabel(nextMoon, zone)}` : moonUp ? ' · up' : ' · down');
+  const planets = planetsPhrase(skyNow.planets, astronomy.sun.altitude);
+  $('planet-line').hidden = !planets;
+  $('planet-line').textContent = planets ? `Planets: ${planets}` : '';
+  const shower = skyNow.showers[0];
+  const meteors = shower ? showerPhrase(shower, { dark: astronomy.sun.altitude < -12, peakLabel: dateLabel(shower.peak), now,
+    cloudy: known && (weather.cloudCover ?? 0) > 70 }) : null;
+  $('meteor-line').hidden = !meteors;
+  $('meteor-line').textContent = meteors ?? '';
+  const airText = airShown ? airPhrase(airShown, aqiCategory(airShown.aqi), !!airWorst)
+    : known && coverage === 'too-far-ahead' ? 'Air quality: no forecast yet' : null;
+  $('air-line').hidden = !airText;
+  $('air-text').textContent = airText ?? '';
+  $('air-line').style.setProperty('--aqi', airShown ? aqiCategory(airShown.aqi).color : 'transparent');
+  $('air-attribution').hidden = !airShown;
   updateTimeline();
 }
 
@@ -1161,6 +1240,24 @@ function queueWeather() {
   }, moved ? 350 : 60);
 }
 
+// Air quality for the selected moment, or for an event the hours it spans. The
+// service covers August 2022 to about five days ahead; outside that nothing is asked.
+function queueAirQuality() {
+  if (!state?.weatherEnabled) return;
+  const time = Date.parse(state.time);
+  const ranged = !!state.rangeEnabled && Date.parse(state.end) > Date.parse(state.start);
+  const start = ranged ? Date.parse(state.start) : time, end = ranged ? Date.parse(state.end) : time;
+  if (airQualityCoverage(start) !== 'available' && airQualityCoverage(end) !== 'available') return;
+  // Three hours either side, for the nearest sample to an instant near midnight.
+  const from = start - 3 * 3_600_000, until = end + 3 * 3_600_000;
+  const key = `${state.latitude.toFixed(3)},${state.longitude.toFixed(3)},${formatUTC(from).slice(0, 10)},${formatUTC(until).slice(0, 10)}`;
+  if (key === air.key) return;
+  air = { key, samples: null, failed: false };
+  airClient.getSamples({ latitude: state.latitude, longitude: state.longitude, start: from, end: until })
+    .then(samples => { if (air.key === key) { air.samples = samples; updateWeatherHUD(); } })
+    .catch(() => { if (air.key === key) { air.failed = true; updateWeatherHUD(); } });
+}
+
 function formatUTC(instant) {
   const date = new Date(instant);
   return Number.isFinite(date.getTime()) ? date.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC') : 'Unavailable';
@@ -1182,6 +1279,7 @@ function applyActivity() {
   // Cesium's loop wakes on every display frame to check for changes even when
   // it draws nothing; behind other apps, ten checks a second are plenty.
   viewer.targetFrameRate = orbitFrame ? 30 : activity.active ? undefined : 10;
+  updateSky();
   if (!shown) {
     animationFrame?.cancel();
     animationFrame = undefined;
@@ -1350,7 +1448,6 @@ function update(next) {
   // The underlying Cesium skybox rotates with sidereal time, not with the camera.
   // Stars wait for nautical twilight, so they do not appear in a still-bright sky.
   if (viewer.scene.skyBox) viewer.scene.skyBox.show = astronomy.sun.altitude < -9;
-  updateConstellations();
   diagnostics?.setEnabled(!!state.diagnostics);
   if (previous?.detail !== state.detail) {
     viewer.resolutionScale = state.detail === 'low' ? 0.75 : 1;
@@ -1377,6 +1474,7 @@ function update(next) {
   updateLightAndWeather();
   queueWeather();
   queueSeries();
+  queueAirQuality();
   // Switching the turntable on starts it now; the idle wait applies only after a touch.
   if (previous?.idleOrbit === false && state.idleOrbit !== false) {
     lastInteraction = performance.now() - IDLE_ORBIT_AFTER;

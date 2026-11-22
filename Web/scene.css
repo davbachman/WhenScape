@@ -41,6 +41,10 @@ body:has(#weather-provenance[open]) #setup-message { visibility: hidden; }
 #weather-summary { font-size: 16px; font-weight: 500; }
 #briefing { font-size: 13px; line-height: 1.4; color: #eef1f4; }
 .facts { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 11px; color: #c5ced8; }
+/* The air quality's colour on the US EPA's scale, as a small dot before it. */
+#air-line { display: inline-flex; align-items: center; gap: 5px; }
+#air-line[hidden] { display: none; }
+.aqi-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--aqi, transparent); box-shadow: 0 0 0 1px #0000004d; flex: none; }
 #timeline { border-radius: 6px; overflow: hidden; }
 #timeline svg { display: block; width: 100%; height: auto; }
 #timeline text { font: 9px -apple-system, BlinkMacSystemFont, sans-serif; fill: #dfe6ec; text-anchor: middle; }
@@ -52,7 +56,7 @@ body:has(#weather-provenance[open]) #setup-message { visibility: hidden; }
 #timeline .now { stroke: #fff; stroke-width: 1.4; }
 #timeline .now-dot { fill: #fff; }
 #weather-detail { margin-top: 3px; }
-#weather-attribution { font-size: 10px; color: #a9bac8; pointer-events: auto; text-underline-offset: 2px; white-space: nowrap; }
+#weather-attribution, #air-attribution { font-size: 10px; color: #a9bac8; pointer-events: auto; text-underline-offset: 2px; white-space: nowrap; }
 .weather-actions { margin-top: 4px; display: flex; align-items: center; gap: 14px; pointer-events: auto; opacity: 0.75; }
 #weather-provenance { font-size: 10px; color: #c3d4e0; }
 #weather-provenance summary { cursor: pointer; }

@@ -28,6 +28,16 @@ await page.route('**/*', async route => {
     for (const key of url.searchParams.get('hourly').split(',')) hourly[key] = time.map(() => values[key] ?? null);
     return route.fulfill({ json: { hourly }, headers: { 'Access-Control-Allow-Origin': '*' } });
   }
+  if (url.hostname === 'air-quality-api.open-meteo.com') {
+    const start = new Date(url.searchParams.get('start_date') + 'T00:00:00Z');
+    const end = new Date(url.searchParams.get('end_date') + 'T23:00:00Z');
+    const time = [];
+    for (let t = +start; t <= +end; t += 3600000) time.push(t / 1000);
+    const values = { us_aqi: 72, us_aqi_pm2_5: 48, us_aqi_ozone: 72, pm2_5: 11.5, ozone: 141 };
+    const hourly = { time };
+    for (const key of url.searchParams.get('hourly').split(',')) hourly[key] = time.map(() => values[key] ?? null);
+    return route.fulfill({ json: { hourly }, headers: { 'Access-Control-Allow-Origin': '*' } });
+  }
   return route.abort();
 });
 
@@ -49,6 +59,12 @@ try {
   await page.waitForFunction(() => window.whenScapeStatus?.weather?.kind === 'forecast');
   assert.match(await page.locator('#weather-summary').textContent(), /Rain/);
   assert.equal(await page.locator('#wind-line').isVisible(), true);
+  // Air quality for the hour, with its colour and the CAMS credit.
+  await page.waitForFunction(() => !document.getElementById('air-line').hidden);
+  assert.equal(await page.locator('#air-line').textContent(), 'Air quality Moderate · AQI 72');
+  assert.equal(await page.locator('#air-line .aqi-dot').evaluate(dot => getComputedStyle(dot).backgroundColor), 'rgb(255, 255, 0)');
+  assert.equal(await page.locator('#air-attribution').isVisible(), true);
+  assert.match(await page.locator('#weather-source-detail').textContent(), /US AQI 72 \(Moderate\), set by ozone/);
   await page.locator('#scene').focus();
   await page.keyboard.press('Alt+ArrowRight');
   await page.waitForTimeout(300);
@@ -174,7 +190,23 @@ try {
   for (let tries = 0; tries < 20 && gone > without + 200; tries++) { await page.waitForTimeout(500); gone = await linePixels(); }
   assert.ok(gone <= without + 200, `hiding them should clear the lines; ${drawn} then ${gone} blue pixels`);
 
+  // The Perseids at their 2024 peak, before dawn: the conditions name the
+  // shower and the planets up, and with motion allowed, meteors streak.
+  state.time = '2024-08-12T10:00:00Z';
+  state.reducedMotion = false;
+  state.diagnostics = true;
+  await page.evaluate(state => window.whenScape.update(state), state);
+  await page.waitForFunction(() => !document.getElementById('meteor-line').hidden);
+  assert.match(await page.locator('#meteor-line').textContent(), /^Perseids: about \d+ an hour$/);
+  assert.match(await page.locator('#planet-line').textContent(), /^Planets: .*(Jupiter|Saturn|Mars|Venus)/);
+  assert.match(await page.locator('#weather-source-detail').textContent(), /Perseids \(meteor shower\): peak about Aug 1[12]/);
+  await page.waitForFunction(() => /[1-9] in flight/.test(document.querySelector('.diagnostics')?.textContent ?? ''), null, { timeout: 20000 });
+  // With reduced motion they stop, and only the radiant stays.
+  state.reducedMotion = true;
+  await page.evaluate(state => window.whenScape.update(state), state);
+  await page.waitForFunction(() => /0 in flight · still/.test(document.querySelector('.diagnostics')?.textContent ?? ''), null, { timeout: 5000 });
+
   assert.equal(await page.locator('#fatal-message').isVisible(), false);
   assert.deepEqual(errors, []);
-  console.log('Browser checks passed: startup, real-data setup state, rotation, compass, daylight/night, clear sky, rain, snow, seasonal mode, no foreground cloud sheet, Sun and Moon finders, a lit night Moon, lens zoom, constellations on and off, and no page errors. Weather responses were fixtures.');
+  console.log('Browser checks passed: startup, real-data setup state, rotation, compass, daylight/night, clear sky, rain, snow, seasonal mode, no foreground cloud sheet, Sun and Moon finders, a lit night Moon, lens zoom, constellations on and off, planets, Perseid meteors, air quality, and no page errors. Weather responses were fixtures.');
 } finally { await browser.close(); }

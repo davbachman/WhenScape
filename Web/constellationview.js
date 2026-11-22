@@ -1,23 +1,13 @@
 // Draws the constellations among Cesium's own stars: the figures of the 88
-// IAU constellations and their names. They sit on a sphere far around the
-// place, turned with the sky by the same transform Cesium gives its stars, so
-// they stay on them as time passes.
+// IAU constellations and their names, in the sky frame (skyframe.js), so they
+// stay on the stars as time passes.
 //
 // The lines are translucent, so they leave the scene's depth untouched. The
 // painted sky (clouds.js) therefore treats them as it treats starlight: they
 // show through a clear sky, fade behind cloud and haze, and stay hidden behind
 // buildings and the ground.
 import { CONSTELLATIONS } from './constellations.js';
-
-// Far enough that moving about the place never shifts them against the stars
-// (2 km is a thousandth of a degree), and inside the camera's far plane.
-const SKY_RADIUS = 2e8;
-
-/** The direction of a right ascension and declination (degrees), in the sky's own axes. */
-export function skyDirection(ra, dec) {
-  const a = ra * Math.PI / 180, d = dec * Math.PI / 180;
-  return { x: Math.cos(d) * Math.cos(a), y: Math.cos(d) * Math.sin(a), z: Math.sin(d) };
-}
+import { skyPoint } from './skyframe.js';
 
 /**
  * How strongly to draw them, 0–1, from the Sun's altitude in degrees. The
@@ -31,14 +21,10 @@ export function constellationStrength(sunAltitude) {
 
 export function createConstellations(C, viewer) {
   let lines, names, lineMaterial, shownStrength;
-  const frame = new C.Matrix4(), rotation = new C.Matrix3();
-  const point = (ra, dec) => {
-    const d = skyDirection(ra, dec);
-    return new C.Cartesian3(d.x * SKY_RADIUS, d.y * SKY_RADIUS, d.z * SKY_RADIUS);
-  };
+  const point = (ra, dec) => skyPoint(C, ra, dec);
 
   // Built the first time they are shown, all at once.
-  function build() {
+  function build(frame) {
     const instances = [];
     for (const [, , , figure] of CONSTELLATIONS) {
       for (const line of figure) {
@@ -75,18 +61,16 @@ export function createConstellations(C, viewer) {
 
   return {
     /**
-     * Show or hide them, and bring them to the moment: `time` is the scene's
-     * JulianDate, `center` the place (a Cartesian3), `sunAltitude` in degrees.
+     * Show or hide them, and bring them to the moment: `frame` is the sky
+     * frame (skyframe.js), `sunAltitude` in degrees.
      */
-    update({ shown, time, center, sunAltitude }) {
+    update({ shown, frame, sunAltitude }) {
       if (!shown) {
         if (lines) lines.show = names.show = false;
         return;
       }
-      if (!lines) build();
+      if (!lines) build(frame);
       lines.show = names.show = true;
-      C.Transforms.computeTemeToPseudoFixedMatrix(time, rotation);
-      C.Matrix4.fromRotationTranslation(rotation, center, frame);
       lines.modelMatrix = frame;
       names.modelMatrix = frame;
       // Steps of a tenth keep the 89 names from being recoloured on every frame of playback.

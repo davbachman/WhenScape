@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CONSTELLATIONS } from '../../Web/constellations.js';
-import { skyDirection, constellationStrength } from '../../Web/constellationview.js';
+import { constellationStrength } from '../../Web/constellationview.js';
+import { skyDirection } from '../../Web/skyframe.js';
 
 const near = (a, b, tolerance) => Math.abs(a - b) <= tolerance;
 

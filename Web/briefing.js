@@ -100,3 +100,34 @@ export function summaryLine({ weather, units, sun, headline = true }) {
   const joined = [prefix, sunText].filter(Boolean).join('; ');
   return joined ? joined[0].toUpperCase() + joined.slice(1) + '.' : '';
 }
+
+/** "Venus W 12° · Saturn SE 52°": planets above the horizon, brightest first. Null while the Sun is up. */
+export function planetsPhrase(planets, sunAltitude) {
+  if (!planets || sunAltitude > -4) return null;
+  const up = planets.filter(p => p.altitude > 1).sort((a, b) => a.magnitude - b.magnitude);
+  return up.length ? up.map(p => `${p.name} ${LETTERS[sector(p.azimuth)]} ${Math.round(p.altitude)}°`).join(' · ') : 'none up';
+}
+
+/**
+ * A few words on a meteor shower: after dark, about how many an hour a person
+ * would see from a dark site ("if clear" under heavy cloud); otherwise when
+ * it peaks. `peakLabel` is the peak's date as the reader writes it, e.g. "Aug 13".
+ */
+export function showerPhrase(shower, { dark, peakLabel, now, cloudy = false }) {
+  if (!shower) return null;
+  if (!dark) return Math.abs(shower.peak - now) < 18 * 3_600_000 ? `${shower.name} at their peak` : `${shower.name} peak ${peakLabel}`;
+  if (shower.altitude <= 0) return `${shower.name}: radiant below the horizon`;
+  const rate = Math.round(shower.rate);
+  return `${shower.name}: ${rate >= 1 ? `about ${rate} an hour` : 'under one an hour'}${cloudy && rate >= 1 ? ' if clear' : ''}`;
+}
+
+/** Where in the sky, in words: "22° up in the east". */
+export function skyPlace(altitude, azimuth) {
+  return `${Math.round(altitude)}° up in the ${WORDS[sector(azimuth)]}`;
+}
+
+/** "Air quality Good · AQI 42", or across an event its worst hour: "Air quality up to Moderate · AQI 71". */
+export function airPhrase(sample, category, ranged) {
+  if (!sample || !category) return null;
+  return `Air quality ${ranged ? 'up to ' : ''}${category.name} · AQI ${sample.aqi}`;
+}

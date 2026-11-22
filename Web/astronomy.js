@@ -76,3 +76,27 @@ export function moonEvents({ latitude, longitude, time, elevation = 1.7 }) {
   const next = direction => Astronomy.SearchRiseSet(Astronomy.Body.Moon, observer, direction, date, 2)?.date.getTime() ?? null;
   return { rise: next(+1), set: next(-1) };
 }
+
+const PLANETS = ['Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn'];
+
+/**
+ * The five planets you can see without a telescope, as seen from the place:
+ * where they are among the stars (J2000 right ascension and declination in
+ * degrees, the frame of the constellation figures), where they are in the sky
+ * (altitude and azimuth) and how bright (magnitude: lower is brighter).
+ */
+export function planetPositions({ latitude, longitude, time, elevation = 1.7 }) {
+  const date = new Date(time);
+  if (!Number.isFinite(date.getTime()) || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    throw new RangeError('A valid instant and geographic coordinates are required.');
+  }
+  const observer = new Astronomy.Observer(latitude, longitude, elevation);
+  return PLANETS.map(name => {
+    const body = Astronomy.Body[name];
+    const amongStars = Astronomy.Equator(body, date, observer, false, true);
+    const ofDate = Astronomy.Equator(body, date, observer, true, true);
+    const sky = Astronomy.Horizon(date, observer, ofDate.ra, ofDate.dec, 'normal');
+    return { name, ra: amongStars.ra * 15, dec: amongStars.dec, altitude: sky.altitude, azimuth: sky.azimuth,
+      magnitude: Astronomy.Illumination(body, date).mag };
+  });
+}
