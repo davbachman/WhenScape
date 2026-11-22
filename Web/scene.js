@@ -268,14 +268,8 @@ function installRotation() {
       return;
     }
     if (!pointer || pointer.id !== e.pointerId) return;
-    heading -= (e.clientX - pointer.x) * 0.003 * pointer.turn;
-    const tilt = (e.clientY - pointer.y) * 0.003;
-    // In the aerial view, dragging down lifts the camera toward a top-down view;
-    // dragging up flattens it and then raises the gaze into the sky.
-    if (photoreal) raiseGaze(-tilt);
-    else pitch = clamp(pitch + tilt, -Math.PI / 2 + 0.02, Math.PI / 2 - 0.02);
+    queueDrag((e.clientX - pointer.x) * pointer.turn, e.clientY - pointer.y);
     pointer.x = e.clientX; pointer.y = e.clientY;
-    setCamera();
   });
   const end = e => {
     down.delete(e.pointerId);
@@ -310,6 +304,41 @@ function installRotation() {
   });
 }
 
+// Drags turn the view once per display frame, easing into each move over a
+// few frames, rather than at each pointer event. Safari delivers trackpad and
+// mouse moves out of step with the display, so a steady drag applied event by
+// event moved the view one step on some frames and two or three on others: a
+// judder most visible on the stars and clouds when looking up.
+const DRAG_EASE_MS = 40;
+const drag = { x: 0, y: 0, frame: 0, last: 0 };
+// dx is already reversed where the turn is (below the pin in the aerial view).
+function queueDrag(dx, dy) {
+  drag.x += dx; drag.y += dy;
+  if (!drag.frame) { drag.last = 0; drag.frame = requestAnimationFrame(applyDrag); }
+}
+function cancelDrag() {
+  if (drag.frame) cancelAnimationFrame(drag.frame);
+  drag.frame = 0; drag.x = drag.y = 0;
+}
+function applyDrag(time) {
+  drag.frame = 0;
+  const elapsed = drag.last ? Math.min(time - drag.last, 100) : 1000 / 60;
+  drag.last = time;
+  const share = 1 - Math.exp(-elapsed / DRAG_EASE_MS);
+  let dx = drag.x * share, dy = drag.y * share;
+  // Finish once less than a tenth of a pixel is left.
+  if (Math.abs(drag.x - dx) < 0.1 && Math.abs(drag.y - dy) < 0.1) { dx = drag.x; dy = drag.y; }
+  drag.x -= dx; drag.y -= dy;
+  heading -= dx * 0.003;
+  const tilt = dy * 0.003;
+  // In the aerial view, dragging down lifts the camera toward a top-down view;
+  // dragging up flattens it and then raises the gaze into the sky.
+  if (photoreal) raiseGaze(-tilt);
+  else pitch = clamp(pitch + tilt, -Math.PI / 2 + 0.02, Math.PI / 2 - 0.02);
+  setCamera();
+  if (drag.x || drag.y) drag.frame = requestAnimationFrame(applyDrag);
+}
+
 // Zooms by a factor: above 1 widens the view or moves the camera out. From the
 // ground, or looking up from the air, it zooms the lens like a telephoto;
 // otherwise it moves the orbit in or out.
@@ -340,6 +369,7 @@ const lookingUp = () => skyTilt > 0.02;
 // A new place or view starts with the gaze on the pin and the normal lens.
 function resetGaze() {
   aim = undefined;
+  cancelDrag();
   skyTilt = 0;
   if (viewer) viewer.camera.frustum.fov = DEFAULT_FOV;
 }
@@ -368,6 +398,7 @@ function lookAtSky(body) {
   const target = astronomy?.[body];
   if (!viewer || !target || target.altitude <= 0) return;
   noteInteraction();
+  cancelDrag();
   const radians = degrees => degrees * Math.PI / 180;
   const from = { heading, dronePitch, skyTilt, pitch, fov: viewer.camera.frustum.fov };
   const turn = ((radians(target.azimuth) - heading) % (2 * Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
