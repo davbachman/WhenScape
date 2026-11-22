@@ -1,10 +1,9 @@
 .DS_Store
-.build/
-build/
 dist/
 node_modules/
-Sources/WhenScape/Resources/Web/
 artifacts/
-.swiftpm/
 .env*
-*.xcuserstate
+# Left over from local builds of the retired Mac app.
+.build/
+build/
+.swiftpm/

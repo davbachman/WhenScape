@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const site = process.argv.includes('--site');
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), site ? '../dist/site' : '../Sources/WhenScape/Resources/Web');
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), site ? '../dist/site' : '../dist/scene');
 const port = site ? 4174 : 4173;
 const mime = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.txt': 'text/plain' };
 http.createServer(async (req, res) => {
@@ -18,4 +18,4 @@ http.createServer(async (req, res) => {
   } catch { res.writeHead(404); res.end('Not found'); }
 }).listen(port, '127.0.0.1', () => console.log(site
   ? `Browser app preview: http://127.0.0.1:${port}/`
-  : `Scene preview: http://127.0.0.1:${port} (native calendar and MapKit require macOS)`));
+  : `Scene preview: http://127.0.0.1:${port} (the 3D scene on its own, as the tests use it)`));

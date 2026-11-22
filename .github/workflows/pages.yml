@@ -1,14 +1,16 @@
-name: Publish the browser app
+name: Test and publish the browser app
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 permissions:
   contents: read
   pages: write
   id-token: write
 concurrency:
-  group: pages
+  # Publishing runs one at a time; a pull request's tests run on their own.
+  group: ${{ github.event_name == 'pull_request' && format('test-{0}', github.ref) || 'pages' }}
   cancel-in-progress: false
 jobs:
   build:
@@ -22,13 +24,25 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - name: Install browser for the browser tests
+        run: npx playwright install --with-deps chromium
+      - name: Build the scene on its own
+        run: npm run build
+      - name: Browser tests of the scene
+        run: |
+          node scripts/preview.mjs &
+          preview=$!
+          for i in $(seq 30); do curl -sf http://127.0.0.1:4173/ >/dev/null && break; sleep 1; done
+          status=0
+          mkdir -p artifacts
+          npm run test:browser || status=$?
+          kill $preview
+          exit $status
       - name: Build the site
         run: npm run build:site
         env:
           # Public in the page; restrict it in Google Cloud to this site and these APIs.
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
-      - name: Install browser for site tests
-        run: npx playwright install --with-deps chromium
       - name: Browser tests of the site
         run: |
           node scripts/preview.mjs --site &
@@ -39,11 +53,14 @@ jobs:
           npm run test:site || status=$?
           kill $preview
           exit $status
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
         with:
           path: dist/site
   deploy:
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:

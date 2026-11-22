@@ -17,9 +17,10 @@ import { createDiagnostics } from './diagnostics.js';
 
 const C = window.Cesium;
 const $ = id => document.getElementById(id);
+// The scene runs in a frame of the WhenScape page, which keeps the place and
+// time and passes them in. (`native` is the bridge of the retired Mac app,
+// which hosted the scene in a web view; nothing uses it now.)
 const native = window.webkit?.messageHandlers?.scene;
-// In the browser version the scene runs in a frame of the WhenScape page,
-// which plays the part of the Mac app around it.
 const host = !native && window.parent !== window ? window.parent : null;
 function tellHost(message) {
   if (native) native.postMessage(message);
@@ -42,12 +43,12 @@ let guides, track, trackKey;
 // The constellation figures, shown or not as the reader last chose.
 let constellations, showConstellations = false;
 const CONSTELLATIONS_KEY = 'whenscape.constellations';
-// Figures for the diagnostics readout only.
 // The planets and meteor showers at the selected moment, and their views.
 let planetView, meteorView, skyKey, skyNow = { planets: [], showers: [] };
 // Air quality: hourly samples for the place and days in view, while loading or failed.
 const airClient = new AirQualityClient();
 let air = { key: undefined, samples: null, failed: false };
+// Figures for the diagnostics readout only.
 let diagnostics, groundReadings = [], tileFailures = 0, framesRendered = 0, frameRate = 0;
 let series = [], seriesKey, seriesAbort, moonTimes, moonKey, timelineEvents = {};
 const units = unitsFor(globalThis.navigator?.language ?? 'en-US');
@@ -59,8 +60,8 @@ let lastWeatherKey, lastWeatherPlace, weatherTimer, weatherAbort, lastAstronomyK
 let lastWeatherAttempt = 0;
 let weatherController = new WeatherController();
 let animationFrame, lastFrame = 0, weatherClock = 0, lastStatus = 0;
-// Whether the app's window can be seen and whether the app is frontmost, as
-// reported by the native side. A covered window draws nothing; a visible window
+// Whether the page can be seen and whether its window is frontmost, as
+// reported by the page around the scene. A covered window draws nothing; a visible window
 // of a background app animates more slowly.
 let activity = { visible: true, active: true };
 const sceneShown = () => activity.visible && !document.hidden;
@@ -138,9 +139,9 @@ function createViewer() {
   flag = createFlag();
   guides = createGuides(C, viewer);
   constellations = createConstellations(C, viewer);
-  try { showConstellations = localStorage.getItem(CONSTELLATIONS_KEY) === '1'; } catch {}
   planetView = createPlanets(C, viewer);
   meteorView = createMeteors(C, viewer);
+  try { showConstellations = localStorage.getItem(CONSTELLATIONS_KEY) === '1'; } catch {}
   diagnostics = createDiagnostics(document.body, diagnosticRows);
   viewer.scene.postRender.addEventListener(() => { framesRendered++; });
   setInterval(() => { frameRate = framesRendered; framesRendered = 0; }, 1000);
@@ -734,8 +735,8 @@ function diagnosticRows() {
     globe: viewer.scene.globe ? `${viewer.scene.globe.show ? 'shown' : 'hidden'} · tiles ${viewer.scene.globe.tilesLoaded ? 'loaded' : 'loading'}` : 'removed',
     tiles: buildings ? `${buildings.tilesLoaded ? 'loaded' : 'loading'} · ${(buildings.totalMemoryUsageInBytes / 1048576).toFixed(0)} MB · ${tileFailures} failed` : 'none',
     frames: `${frameRate}/s${sceneShown() ? '' : ' · paused (window hidden)'}${activity.active ? '' : ' · app in background'}`,
-    weather: `${weather.kind}${weather.validAt ? ` · ${weather.validAt.slice(0, 16)}Z` : ''}`,
     meteors: (() => { const m = meteorView?.stats(); return m?.showers ? `${m.showers} shower${m.showers === 1 ? '' : 's'} · ${m.perSecond.toFixed(2)} streaks/s · ${m.live} in flight${m.animate ? '' : ' · still'}` : undefined; })(),
+    weather: `${weather.kind}${weather.validAt ? ` · ${weather.validAt.slice(0, 16)}Z` : ''}`,
   };
 }
 
@@ -811,8 +812,7 @@ async function loadGeography({ googleKey, ionToken: token }) {
   if (!token) {
     geometryMessage = 'Sky preview · terrain and buildings not loaded';
     $('geometry-status').textContent = geometryMessage;
-    if (host) showNotice('Sky preview', 'The 3D model of this place isn’t available here. The sky, Sun, Moon and weather are calculated for your selected place and time.');
-    else showNotice('Connect geographic data', 'Add a Cesium ion token in Settings to load real terrain and buildings. The sky is calculated for your selected place and time.');
+    showNotice('Sky preview', 'The 3D model of this place isn’t available here. The sky, Sun, Moon and weather are calculated for your selected place and time.');
     placeObserver();
     postStatus(true);
     return;
@@ -1456,7 +1456,8 @@ function update(next) {
     viewer.scene.shadowMap.size = state.detail === 'low' ? 1024 : 2048;
   }
   if (photoreal && buildings && previous?.computedShadows !== state.computedShadows) buildings.shadows = meshShadowMode();
-  // The browser version supplies a Google key; the Mac app a Cesium ion token.
+  // The page supplies a Google key. A Cesium ion token, for terrain and OSM
+  // buildings, came from the retired Mac app; the page never sends one.
   const dataSource = state.googleKey ? `google:${state.googleKey}` : state.ionToken;
   if (activeToken !== dataSource) {
     activeToken = dataSource;
@@ -1473,8 +1474,8 @@ function update(next) {
   }
   updateLightAndWeather();
   queueWeather();
-  queueSeries();
   queueAirQuality();
+  queueSeries();
   // Switching the turntable on starts it now; the idle wait applies only after a touch.
   if (previous?.idleOrbit === false && state.idleOrbit !== false) {
     lastInteraction = performance.now() - IDLE_ORBIT_AFTER;

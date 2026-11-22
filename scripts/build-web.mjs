@@ -22,7 +22,8 @@ export async function buildScene(out) {
   await build({ entryPoints: [path.join(root, 'Web/scene.js')], bundle: true, outfile: path.join(out, 'app.js'), format: 'iife', target: 'safari17', minify: true });
 }
 
+// On its own, for the scene's tests: npm run build, then npm run preview.
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  await buildScene(path.join(root, 'Sources/WhenScape/Resources/Web'));
-  console.log('Bundled the scene and Cesium assets for offline app loading. Map and weather data still require a connection.');
+  await buildScene(path.join(root, 'dist/scene'));
+  console.log('Built the 3D scene on its own in dist/scene.');
 }

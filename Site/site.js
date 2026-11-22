@@ -1,6 +1,6 @@
-// The WhenScape browser app: the page around the 3D scene. It plays the part
-// of the Mac app: it keeps the place and time, the location panel and the
-// time controls, and passes everything to the scene in its frame.
+// The WhenScape browser app: the page around the 3D scene. It keeps the place
+// and time, the location panel and the time controls, and passes everything
+// to the scene in its frame.
 
 import tzlookup from '@photostructure/tz-lookup';
 import { dayInterval, clamped, stepped, advancing, toTimeValue, withCivilDate, withWallTime, zoneLabel, formatMoment, noonOn, civilDate, isTimeZone } from './time.js';
