@@ -144,7 +144,37 @@ try {
   const wide = await moonPixelsUntil(count => count < close / 3);
   assert.ok(wide < close / 3, `scrolling out should widen the lens; ${close} then ${wide} bright pixels`);
 
+  // The constellations button draws the figures on the night sky, says so,
+  // remembers the choice, and takes them away again.
+  const linePixels = async () => {
+    const shot = await page.locator('#scene').screenshot();
+    return page.evaluate(async data => {
+      const bitmap = await createImageBitmap(new Blob([new Uint8Array(data)], { type: 'image/png' }));
+      const context = new OffscreenCanvas(bitmap.width, bitmap.height).getContext('2d');
+      context.drawImage(bitmap, 0, 0);
+      const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+      let blue = 0;
+      for (let i = 0; i < pixels.length; i += 4) if (pixels[i + 2] > 90 && pixels[i + 2] > pixels[i] + 35) blue++;
+      return blue;
+    }, [...shot]);
+  };
+  const toggle = page.locator('#show-constellations');
+  assert.equal(await toggle.getAttribute('aria-pressed'), 'false');
+  const without = await linePixels();
+  await toggle.click();
+  assert.equal(await toggle.getAttribute('aria-pressed'), 'true');
+  assert.equal(await toggle.getAttribute('title'), 'Hide the constellations');
+  assert.equal(await page.evaluate(() => localStorage.getItem('whenscape.constellations')), '1');
+  let drawn = without;
+  for (let tries = 0; tries < 20 && drawn < without + 500; tries++) { await page.waitForTimeout(500); drawn = await linePixels(); }
+  assert.ok(drawn > without + 500, `constellation lines should show on the night sky; ${without} then ${drawn} blue pixels`);
+  await toggle.click();
+  assert.equal(await toggle.getAttribute('aria-pressed'), 'false');
+  let gone = drawn;
+  for (let tries = 0; tries < 20 && gone > without + 200; tries++) { await page.waitForTimeout(500); gone = await linePixels(); }
+  assert.ok(gone <= without + 200, `hiding them should clear the lines; ${drawn} then ${gone} blue pixels`);
+
   assert.equal(await page.locator('#fatal-message').isVisible(), false);
   assert.deepEqual(errors, []);
-  console.log('Browser checks passed: startup, real-data setup state, rotation, compass, daylight/night, clear sky, rain, snow, seasonal mode, no foreground cloud sheet, Sun and Moon finders, a lit night Moon, lens zoom, and no page errors. Weather responses were fixtures.');
+  console.log('Browser checks passed: startup, real-data setup state, rotation, compass, daylight/night, clear sky, rain, snow, seasonal mode, no foreground cloud sheet, Sun and Moon finders, a lit night Moon, lens zoom, constellations on and off, and no page errors. Weather responses were fixtures.');
 } finally { await browser.close(); }

@@ -66,7 +66,9 @@ body:has(#weather-provenance[open]) #setup-message { visibility: hidden; }
 .cesium-widget-credits { text-shadow: 0 1px 4px #000; }
 .cesium-viewer-toolbar, .cesium-viewer-animationContainer, .cesium-viewer-timelineContainer, .cesium-viewer-fullscreenContainer { display: none !important; }
 @media (max-width: 760px) { .conditions { flex-wrap: wrap; } .conditions .chart { flex-basis: 100%; } }
-@media (max-width: 600px) { .top-hud { top: 18px; left: 18px; right: 18px; } .bottom-hud { left: 12px; right: 12px; } .rotate-hint { display: none; } }
+@media (max-width: 600px) { .top-hud { top: 18px; left: 18px; right: 18px; } .bottom-hud { left: 12px; right: 12px; } .rotate-hint { display: none; }
+  /* Narrow, the notice spans the width, so it sits clear below the compass and sky buttons. */
+  .notice { top: max(43%, 255px); } }
 @media (max-height: 460px) { .conditions .chart { display: none; } }
 @media (max-height: 500px) { #setup-message { top: 115px; width: auto; max-width: calc(100% - 36px); padding: 10px 14px; } #setup-message .notice-icon, #setup-message p { display: none; } }
 @media (prefers-reduced-transparency: reduce) { .glass { background: #1c2b38; backdrop-filter: none; } }
@@ -97,3 +99,8 @@ body:has(#weather-provenance[open]) #setup-message { visibility: hidden; }
 .finder:disabled { cursor: default; }
 /* Only the icon dims, so the button keeps its glass over a bright scene. */
 .finder:disabled svg { opacity: 0.35; }
+/* Below them, a switch for the constellation figures, lit while they show. */
+.sky-toggle { flex: none; }
+.sky-toggle svg { width: 20px; height: 20px; }
+.sky-toggle[aria-pressed="true"] { background: #2f5d9ccc; border-color: #9cc0ff73; }
+.sky-toggle[aria-pressed="true"]:hover { background: #3a6cb0d9; }

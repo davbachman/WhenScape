@@ -3,6 +3,7 @@ import { unitsFor, formatTemperature, conditionName, windReadout, notableGust, s
 import { timelineMarkup } from './timeline.js';
 import { clockLabel } from './guides.js';
 import { createGuides } from './guideview.js';
+import { createConstellations } from './constellationview.js';
 import { WeatherController } from './weather.js';
 import { createCloudStage } from './clouds.js';
 import { flagExtension, flagShape, flagShadow, shadowOffset } from './flag.js';
@@ -33,6 +34,9 @@ const droneLimits = { minPitch: -80 * Math.PI / 180, maxPitch: -6 * Math.PI / 18
 let dronePitch = -20 * Math.PI / 180, droneRange = 175;
 let flag, flagTimer, lastFlagRender = 0, lastSkyRender = 0;
 let guides, track, trackKey;
+// The constellation figures, shown or not as the reader last chose.
+let constellations, showConstellations = false;
+const CONSTELLATIONS_KEY = 'whenscape.constellations';
 // Figures for the diagnostics readout only.
 let diagnostics, groundReadings = [], tileFailures = 0, framesRendered = 0, frameRate = 0;
 let series = [], seriesKey, seriesAbort, moonTimes, moonKey, timelineEvents = {};
@@ -123,6 +127,8 @@ function createViewer() {
   prepareStarTextures();
   flag = createFlag();
   guides = createGuides(C, viewer);
+  constellations = createConstellations(C, viewer);
+  try { showConstellations = localStorage.getItem(CONSTELLATIONS_KEY) === '1'; } catch {}
   diagnostics = createDiagnostics(document.body, diagnosticRows);
   viewer.scene.postRender.addEventListener(() => { framesRendered++; });
   setInterval(() => { frameRate = framesRendered; framesRendered = 0; }, 1000);
@@ -136,6 +142,12 @@ function createViewer() {
   $('compass').addEventListener('click', () => { noteInteraction(); heading = 0; setCamera(); });
   $('find-sun').addEventListener('click', () => lookAtSky('sun'));
   $('find-moon').addEventListener('click', () => lookAtSky('moon'));
+  $('show-constellations').addEventListener('click', () => {
+    showConstellations = !showConstellations;
+    try { localStorage.setItem(CONSTELLATIONS_KEY, showConstellations ? '1' : '0'); } catch {}
+    updateConstellations();
+    viewer.scene.requestRender();
+  });
   $('refresh-weather').addEventListener('click', () => { lastWeatherKey = undefined; queueWeather(); });
   installConditionsPin();
   installHostForwarding();
@@ -422,6 +434,17 @@ function lookAtSky(body) {
   };
   // With reduced motion the view turns at once, without waiting for a frame.
   if (duration) requestAnimationFrame(step); else step(start);
+}
+
+// The constellations turn with the sky, so they follow the scene's time and place.
+function updateConstellations() {
+  if (!constellations || !state) return;
+  constellations.update({ shown: showConstellations, time: viewer.clock.currentTime,
+    center: C.Cartesian3.fromDegrees(state.longitude, state.latitude, eyeHeight - 1.7),
+    sunAltitude: astronomy?.sun.altitude ?? 0 });
+  const button = $('show-constellations');
+  button.setAttribute('aria-pressed', String(showConstellations));
+  button.title = showConstellations ? 'Hide the constellations' : 'Show the constellations';
 }
 
 // The finders work only for a body above the horizon.
@@ -1327,6 +1350,7 @@ function update(next) {
   // The underlying Cesium skybox rotates with sidereal time, not with the camera.
   // Stars wait for nautical twilight, so they do not appear in a still-bright sky.
   if (viewer.scene.skyBox) viewer.scene.skyBox.show = astronomy.sun.altitude < -9;
+  updateConstellations();
   diagnostics?.setEnabled(!!state.diagnostics);
   if (previous?.detail !== state.detail) {
     viewer.resolutionScale = state.detail === 'low' ? 0.75 : 1;

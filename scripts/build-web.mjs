@@ -16,6 +16,8 @@ export async function buildScene(out) {
   const astronomyNotice = astronomySource.match(/^\/\*\*([\s\S]*?)\*\//)?.[1];
   if (!astronomyNotice?.includes('MIT License')) throw new Error('Astronomy Engine license notice missing');
   await writeFile(path.join(out, 'licenses/AstronomyEngine.txt'), astronomyNotice);
+  // The constellation figures in Web/constellations.js come from d3-celestial.
+  await copyFile(path.join(root, 'Web/licenses/d3-celestial.txt'), path.join(out, 'licenses/d3-celestial.txt'));
   for (const file of ['index.html', 'scene.css']) await copyFile(path.join(root, 'Web', file), path.join(out, file));
   await build({ entryPoints: [path.join(root, 'Web/scene.js')], bundle: true, outfile: path.join(out, 'app.js'), format: 'iife', target: 'safari17', minify: true });
 }
