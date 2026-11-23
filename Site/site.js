@@ -685,7 +685,15 @@ for (const [name, field] of Object.entries(dateFields)) {
   field.time.addEventListener('blur', () => { if (timePicker.isOpenFor(field.time)) timePicker.close(); });
 }
 for (const button of document.querySelectorAll('.now')) {
-  button.addEventListener('click', () => (button.dataset.field === 'start' ? chooseStart(new Date()) : chooseInstant(new Date())));
+  button.addEventListener('click', () => {
+    const now = new Date();
+    if (button.dataset.field !== 'start') { chooseInstant(now); return; }
+    // Starting the range now also shows now, rather than leaving the scene
+    // at a later moment that is still inside the range.
+    chooseStart(now);
+    app.isPlaying = false;
+    setInstant(now);
+  });
 }
 $('range-toggle').addEventListener('change', event => { clearEvent(); setRangeEnabled(event.target.checked); });
 $('scrub').addEventListener('input', event => { app.isPlaying = false; setInstant(new Date(Number(event.target.value) * 1000)); });

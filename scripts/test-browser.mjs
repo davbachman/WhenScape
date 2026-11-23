@@ -13,9 +13,13 @@ const errors = [];
 page.on('pageerror', error => errors.push(error.message));
 let snow = false;
 let cloudsOnly = false;
+// A stand-in for Google's 3D model: an empty tileset, enough for the aerial view.
+const emptyTileset = { asset: { version: '1.0' }, geometricError: 100000,
+  root: { boundingVolume: { region: [-Math.PI, -Math.PI / 2, Math.PI, Math.PI / 2, -1000, 10000] }, geometricError: 100000, refine: 'REPLACE' } };
 await page.route('**/*', async route => {
   const url = new URL(route.request().url());
   if (url.hostname === '127.0.0.1' || url.protocol === 'blob:' || url.protocol === 'data:') return route.continue();
+  if (url.hostname === 'tile.googleapis.com') return route.fulfill({ json: emptyTileset, headers: { 'Access-Control-Allow-Origin': '*' } });
   if (url.hostname === 'api.open-meteo.com' || url.hostname === 'archive-api.open-meteo.com') {
     const start = new Date(url.searchParams.get('start_date') + 'T00:00:00Z');
     const end = new Date(url.searchParams.get('end_date') + 'T23:00:00Z');
@@ -206,7 +210,37 @@ try {
   await page.evaluate(state => window.whenScape.update(state), state);
   await page.waitForFunction(() => /0 in flight · still/.test(document.querySelector('.diagnostics')?.textContent ?? ''), null, { timeout: 5000 });
 
+  // The turntable, in the aerial view over the stand-in model. Switching it on
+  // starts it; it keeps circling while time plays and while the time keys are
+  // pressed in the scene, and a key that moves the view stops it.
+  const aerial = { ...state, reducedMotion: false, diagnostics: false, googleKey: 'test-key', idleOrbit: false };
+  await page.evaluate(state => window.whenScape.update(state), aerial);
+  await page.waitForFunction(() => /^Photorealistic/.test(window.whenScapeStatus?.message ?? ''), null, { timeout: 20000 });
+  const heading = () => page.evaluate(() => window.whenScapeStatus.heading);
+  const turns = async why => {
+    const from = await heading();
+    await page.waitForFunction(from => (window.whenScapeStatus.heading - from + 360) % 360 > 1, from, { timeout: 10000 })
+      .catch(() => assert.fail(`the turntable should keep turning ${why}`));
+  };
+  await page.evaluate(state => window.whenScape.update({ ...state, idleOrbit: true }), aerial);
+  await turns('once switched on');
+  // Playing, as the page does it: a later time every tenth of a second.
+  await page.evaluate(state => {
+    let time = Date.parse(state.time);
+    window.playing = setInterval(() => window.whenScape.update({ ...state, idleOrbit: true, time: new Date(time += 30_000).toISOString() }), 100);
+  }, aerial);
+  await turns('while time plays');
+  await page.evaluate(() => clearInterval(window.playing));
+  await page.locator('#scene').focus();
+  for (const key of [' ', 'ArrowRight', 'Shift+ArrowLeft']) await page.keyboard.press(key);
+  await turns('after Space and the time keys');
+  await page.keyboard.press('Alt+ArrowRight');
+  await page.waitForTimeout(400);
+  const stopped = await heading();
+  await page.waitForTimeout(1500);
+  assert.ok(Math.abs(await heading() - stopped) < 0.2, 'turning the view by key stops the turntable');
+
   assert.equal(await page.locator('#fatal-message').isVisible(), false);
   assert.deepEqual(errors, []);
-  console.log('Browser checks passed: startup, real-data setup state, rotation, compass, daylight/night, clear sky, rain, snow, seasonal mode, no foreground cloud sheet, Sun and Moon finders, a lit night Moon, lens zoom, constellations on and off, planets, Perseid meteors, air quality, and no page errors. Weather responses were fixtures.');
+  console.log('Browser checks passed: startup, real-data setup state, rotation, compass, daylight/night, clear sky, rain, snow, seasonal mode, no foreground cloud sheet, Sun and Moon finders, a lit night Moon, lens zoom, constellations on and off, planets, Perseid meteors, air quality, the turntable through playback and time keys, and no page errors. Weather responses were fixtures.');
 } finally { await browser.close(); }

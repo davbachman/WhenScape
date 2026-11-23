@@ -308,9 +308,14 @@ function installRotation() {
     zoomBy(Math.exp(clamp(e.deltaY, -200, 200) * 0.002));
   }, { passive: false });
   $('scene').addEventListener('keydown', e => {
+    // Only keys that move the view count as a touch that stops the turntable.
+    // Plain ← and → step through time and Space plays (the page handles both),
+    // so time can play while the view circles; with Option, ← and → turn it.
+    const turn = e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
+    const zoom = e.key === '+' || e.key === '=' || e.key === '-' || e.key === '_';
+    if (!turn && !zoom && e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
     noteInteraction();
     const amount = e.shiftKey ? 0.12 : 0.035;
-    // Plain ← and → step through time (handled by the app); with Option they turn the view.
     if (e.key === 'ArrowLeft' && e.altKey) heading -= amount;
     else if (e.key === 'ArrowRight' && e.altKey) heading += amount;
     else if (photoreal && e.key === 'ArrowUp') raiseGaze(amount);
@@ -321,7 +326,6 @@ function installRotation() {
     else if (photoreal && (e.key === '-' || e.key === '_')) droneRange = Math.min(droneRange * 1.15, droneLimits.maxRange);
     else if (e.key === 'ArrowUp') pitch = Math.min(pitch + amount, Math.PI / 2 - 0.02);
     else if (e.key === 'ArrowDown') pitch = Math.max(pitch - amount, -Math.PI / 2 + 0.02);
-    else return;
     e.preventDefault(); setCamera();
   });
 }

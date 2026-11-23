@@ -202,6 +202,14 @@ try {
     assert.equal((await state(page)).end, now.end);
   }
   await page.keyboard.press('Escape');
+  // The start's Now starts the range now and shows now, though the moment
+  // shown was later and still inside the range.
+  assert.ok(new Date((await state(page)).instant) > Date.now(), 'the range starts tomorrow');
+  await page.locator('#range-fields .now').click();
+  const started = await state(page);
+  assert.equal(started.instant, started.start);
+  assert.ok(Math.abs(new Date(started.instant) - Date.now()) < 60_000, 'the scene is sent to now');
+  assert.equal(started.end, now.end, 'the end stays');
   await page.locator('#range-toggle').uncheck();
 
   // Pasting a copied Calendar event, in the page or in the scene, brings in its time and asks for a place.
